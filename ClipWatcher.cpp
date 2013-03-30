@@ -1,7 +1,6 @@
 //  ClipWatcher.cpp
 //
 
-#include <tchar.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <Windows.h>
@@ -24,7 +23,7 @@ const UINT ICON_ID = 1;
 
 // 
 typedef struct _FileEntry {
-    TCHAR name[MAX_PATH];
+    WCHAR name[MAX_PATH];
     FILETIME mtime;
     struct _FileEntry* next;
 } FileEntry;
@@ -33,18 +32,18 @@ typedef struct _FileEntry {
 // 
 typedef struct _ClipWatcher {
     HWND hwndnext;
-    LPTSTR watchdir;
-    LPTSTR name;
+    LPWSTR watchdir;
+    LPWSTR name;
     HANDLE notifier;
     BOOL writefile;
     FileEntry* files;
 } ClipWatcher;
 
 // findFileEntry(files, name)
-static FileEntry* findFileEntry(FileEntry* entry, LPCTSTR name)
+static FileEntry* findFileEntry(FileEntry* entry, LPCWSTR name)
 {
     while (entry != NULL) {
-	if (_tcsicmp(entry->name, name) == 0) return entry;
+	if (wcsicmp(entry->name, name) == 0) return entry;
 	entry = entry->next;
     }
     return entry;
@@ -63,9 +62,10 @@ static void freeFileEntries(FileEntry* entry)
 // checkFileChanges(watcher)
 static FileEntry* checkFileChanges(ClipWatcher* watcher)
 {
-    TCHAR dirpath[MAX_PATH];
-    StringCbPrintf(dirpath, sizeof(dirpath), _T("%s\\*.txt"), 
+    WCHAR dirpath[MAX_PATH];
+    StringCbPrintf(dirpath, sizeof(dirpath), L"%s\\*.txt", 
 		   watcher->watchdir);
+
     WIN32_FIND_DATA data;
     FileEntry* found = NULL;
 
@@ -73,9 +73,9 @@ static FileEntry* checkFileChanges(ClipWatcher* watcher)
     if (fft == NULL) goto fail;
     
     for (;;) {
-	_ftprintf(stderr, _T("name=%s\n"), data.cFileName);
-	TCHAR path[MAX_PATH];
-	StringCbPrintf(path, sizeof(path), _T("%s\\%s"), 
+	fwprintf(stderr, L"name=%s\n", data.cFileName);
+	WCHAR path[MAX_PATH];
+	StringCbPrintf(path, sizeof(path), L"%s\\%s", 
 		       watcher->watchdir, data.cFileName);
 	HANDLE fp = CreateFile(path, GENERIC_READ, FILE_SHARE_READ,
 			       NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 
@@ -106,43 +106,37 @@ fail:
 }
 
 // writeClipText(watcher, text)
-static void writeClipText(ClipWatcher* watcher, LPCTSTR text)
+static void writeClipText(ClipWatcher* watcher, LPCWSTR text)
 {
-    TCHAR path[MAX_PATH];
-    StringCbPrintf(path, sizeof(path), _T("%s\\%s.txt"), 
+    WCHAR path[MAX_PATH];
+    StringCbPrintf(path, sizeof(path), L"%s\\%s.txt", 
 		   watcher->watchdir, watcher->name);
 
     HANDLE fp = CreateFile(path, GENERIC_WRITE, FILE_SHARE_READ,
 			   NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, 
 			   NULL);
     if (fp != NULL) {
-	_ftprintf(stderr, _T("write file: path=%s\n"), path);
-	BYTE* rawbytes;
-#ifdef UNICODE
-	int nbytes = WideCharToMultiByte(CP_UTF8, 0, text, -1, NULL, 0, NULL, NULL);
-	bytes = (BYTE)* malloc(sizeof(BYTE)*(nbytes+1));
-	WideCharToMultiByte(CP_UTF8, 0, text, -1, bytes, nbytes, NULL, NULL);
-#else
-	int nbytes = _tcslen(text);
-	rawbytes = (BYTE*)text;
-#endif
+	fwprintf(stderr, L"write file: path=%s\n", path);
+	int nbytes = WideCharToMultiByte(CP_ACP, 0, text, -1, NULL, 0, NULL, NULL);
+	BYTE* bytes = (BYTE*) malloc(sizeof(BYTE)*(nbytes+1));
+	WideCharToMultiByte(CP_ACP, 0, text, -1, (LPSTR)bytes, nbytes, NULL, NULL);
 	DWORD written;
-	WriteFile(fp, rawbytes, nbytes, &written, NULL);
+	WriteFile(fp, bytes, nbytes, &written, NULL);
 	CloseHandle(fp);
     }
 }
 
 // readClipText(watcher, text)
-static LPTSTR readClipText(ClipWatcher* watcher, LPCTSTR name)
+static LPWSTR readClipText(ClipWatcher* watcher, LPCWSTR name)
 {
-    TCHAR path[MAX_PATH];
-    StringCbPrintf(path, sizeof(path), _T("%s\\%s"), 
+    WCHAR path[MAX_PATH];
+    StringCbPrintf(path, sizeof(path), L"%s\\%s", 
 		   watcher->watchdir, name);
     
     HANDLE fp = CreateFile(path, GENERIC_READ, FILE_SHARE_READ,
 			   NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 
 			   NULL);
-    LPTSTR text = NULL;
+    LPWSTR text = NULL;
     WCHAR* chars = NULL;
     BYTE* bytes = NULL;
     if (fp != NULL) {
@@ -151,36 +145,30 @@ static LPTSTR readClipText(ClipWatcher* watcher, LPCTSTR name)
 	if (bytes != NULL) {
 	    DWORD read;
 	    ReadFile(fp, bytes, nbytes, &read, NULL);
-	    int nchars = MultiByteToWideChar(CP_UTF8, 0, (LPSTR)bytes, nbytes, NULL, 0);
+	    int nchars = MultiByteToWideChar(CP_ACP, 0, (LPSTR)bytes, nbytes, NULL, 0);
 	    chars = (WCHAR*) malloc(sizeof(WCHAR)*(nchars+1));
 	    if (chars != NULL) {
-		MultiByteToWideChar(CP_UTF8, 0, (LPSTR)bytes, nbytes, chars, nchars);
+		MultiByteToWideChar(CP_ACP, 0, (LPSTR)bytes, nbytes, chars, nchars);
 	    }
 	}
 	CloseHandle(fp);
     }
 
     if (chars != NULL) {
-#ifdef UNICODE
 	text = chars;
-#else
-	int textlen = WideCharToMultiByte(CP_ACP, 0, chars, -1, NULL, 0, NULL, NULL);
-	text = (LPTSTR) malloc(sizeof(TCHAR)*(textlen+1));
-	WideCharToMultiByte(CP_ACP, 0, chars, -1, text, textlen, NULL, NULL);
-#endif
     }
     return text;
 }
 
 //  CreateClipWatcher
 // 
-ClipWatcher* CreateClipWatcher(LPCTSTR watchdir, LPCTSTR name)
+ClipWatcher* CreateClipWatcher(LPCWSTR watchdir, LPCWSTR name)
 {
     ClipWatcher* watcher = (ClipWatcher*) malloc(sizeof(ClipWatcher));
     if (watcher == NULL) return NULL;
 
-    watcher->watchdir = _tcsdup(watchdir);
-    watcher->name = _tcsdup(name);
+    watcher->watchdir = wcsdup(watchdir);
+    watcher->name = wcsdup(name);
 
     // Register a file watcher.
     watcher->notifier = FindFirstChangeNotification(
@@ -216,7 +204,7 @@ void DestroyClipWatcher(ClipWatcher* watcher)
 }
 
 // popupInfo
-static void popupInfo(HWND hWnd, LPCTSTR title, LPCTSTR text)
+static void popupInfo(HWND hWnd, LPCWSTR title, LPCWSTR text)
 {
     NOTIFYICONDATA nidata = {0};
     nidata.cbSize = sizeof(nidata);
@@ -236,9 +224,9 @@ static void displayContextMenu(HWND hWnd, POINT pt)
     HMENU menu = CreatePopupMenu();
     if (menu != NULL) {
 	AppendMenu(menu, MF_STRING | MF_ENABLED,
-		   ITEM_OPEN, _T("Open"));
+		   ITEM_OPEN, L"Open");
 	AppendMenu(menu, MF_STRING | MF_ENABLED,
-		   ITEM_EXIT, _T("Exit"));
+		   ITEM_EXIT, L"Exit");
 	TrackPopupMenu(menu, TPM_LEFTALIGN, 
 		       pt.x, pt.y, 0, hWnd, NULL);
 	DestroyMenu(menu);
@@ -272,7 +260,7 @@ static LRESULT CALLBACK clipWatcherWndProc(
 	    nidata.uCallbackMessage = WM_NOTIFY_ICON;
 	    nidata.hIcon = LoadIcon(NULL, IDI_INFORMATION);
 	    StringCbPrintf(nidata.szTip, sizeof(nidata.szTip),
-			   _T("Watching: %s"), 
+			   L"Watching: %s", 
 			   watcher->watchdir);
 	    Shell_NotifyIcon(NIM_ADD, &nidata);
 	}
@@ -320,25 +308,19 @@ static LRESULT CALLBACK clipWatcherWndProc(
 	    if (OpenClipboard(hWnd)) {
 		HANDLE data = GetClipboardData(CF_TEXT);
 		if (data != NULL) {
-		    _ftprintf(stderr, _T("open clip\n"));
+		    fwprintf(stderr, L"open clip\n");
 		    LPCSTR rawtext = (LPCSTR) GlobalLock(data);
 		    if (rawtext != NULL) {
-			LPTSTR text;
-#ifdef UNICODE
+			LPWSTR text;
 			int nchars = MultiByteToWideChar(CP_ACP, 0, rawtext, -1, NULL, 0);
-			text = (LPTSTR)malloc(sizeof(TCHAR)*(nchars+1));
+			text = (LPWSTR)malloc(sizeof(WCHAR)*(nchars+1));
 			MultiByteToWideChar(CP_ACP, 0, rawtext, -1, text, nchars);
-#else
-			text = (LPTSTR)rawtext;
-#endif
 			if (watcher->writefile) {
 			    writeClipText(watcher, text);
 			}
 			watcher->writefile = TRUE;
-			popupInfo(hWnd, _T("Clipboard Updated"), text);
-#ifdef UNICODE
+			popupInfo(hWnd, L"Clipboard Updated", text);
 			free(text);
-#endif
 			GlobalUnlock(data);
 		    }
 		}
@@ -377,23 +359,15 @@ static LRESULT CALLBACK clipWatcherWndProc(
 	if (watcher != NULL) {
 	    FileEntry* entry = checkFileChanges(watcher);
 	    if (entry != NULL) {
-		LPTSTR text = readClipText(watcher, entry->name);
+		LPWSTR text = readClipText(watcher, entry->name);
 		if (text != NULL) {
 		    int nbytes;
 		    HANDLE data;
-#ifdef UNICODE
 		    nbytes = WideCharToMultiByte(CP_ACP, 0, text, -1, NULL, 0, NULL, NULL);
-#else
-		    nbytes = _tcslen(text)+1;
-#endif
 		    data = GlobalAlloc(GHND, nbytes);
 		    if (data != NULL) {
 			BYTE* bytes = (BYTE*) GlobalLock(data);
-#ifdef UNICODE
-			MultiByteToWideChar(CP_UTF8, 0, text, -1, bytes, nbytes, NULL, NULL);
-#else
-			StringCbCopy((LPSTR)bytes, nbytes, text);
-#endif
+			WideCharToMultiByte(CP_ACP, 0, text, -1, (LPSTR)bytes, nbytes, NULL, NULL);
 			if (OpenClipboard(hWnd)) {
 			    watcher->writefile = FALSE;
 			    SetClipboardData(CF_TEXT, data);
@@ -405,10 +379,10 @@ static LRESULT CALLBACK clipWatcherWndProc(
 		    free(text);
 		}
 		
-		TCHAR path[MAX_PATH];
-		StringCbPrintf(path, sizeof(path), _T("%s\\%s"), 
+		WCHAR path[MAX_PATH];
+		StringCbPrintf(path, sizeof(path), L"%s\\%s", 
 			       watcher->watchdir, entry->name);
-		_ftprintf(stderr, _T("open file: path=%s\n"), path);
+		fwprintf(stderr, L"open file: path=%s\n", path);
 		HANDLE fp = CreateFile(path, GENERIC_READ, FILE_SHARE_READ,
 				       NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 
 				       NULL);
@@ -442,26 +416,32 @@ static LRESULT CALLBACK clipWatcherWndProc(
 }
 
 
-//  WinMain
+//  ClipWatcherMain
 // 
-int WinMain(HINSTANCE hInstance, 
-	    HINSTANCE hPrevInstance, 
-	    LPSTR lpCmdLine,
-	    int nCmdShow)
+int ClipWatcherMain(
+    HINSTANCE hInstance, 
+    HINSTANCE hPrevInstance, 
+    int nCmdShow,
+    int argc, LPWSTR* argv)
 {
-    LPCTSTR WATCHPATH = _T("Dropbox\\Clipboard");
+    LPCWSTR clippath = L"Dropbox\\Clipboard";
+    if (2 <= argc) {
+	clippath = argv[1];
+    }
 
-    TCHAR home[MAX_PATH];
+    // Obtain the home path.
+    WCHAR home[MAX_PATH];
     SHGetFolderPath(NULL, CSIDL_PROFILE, NULL, SHGFP_TYPE_CURRENT, home);
 
-    TCHAR watchdir[MAX_PATH];
-    _stprintf_s(watchdir, sizeof(watchdir)/sizeof(watchdir[0]), 
-		_T("%s\\%s"), home, WATCHPATH);
+    // Obtain the clipboard directory path.
+    WCHAR clipdir[MAX_PATH];
+    StringCbPrintf(clipdir, sizeof(clipdir), L"%s\\%s", 
+		   home, clippath);
 
-    TCHAR name[MAX_COMPUTERNAME_LENGTH+1];
+    WCHAR name[MAX_COMPUTERNAME_LENGTH+1];
     DWORD namelen = sizeof(name);
     GetComputerName(name, &namelen);
-    ClipWatcher* watcher = CreateClipWatcher(watchdir, name);
+    ClipWatcher* watcher = CreateClipWatcher(clipdir, name);
 
     ATOM atom;
     {
@@ -470,13 +450,13 @@ int WinMain(HINSTANCE hInstance,
 	klass.lpfnWndProc = clipWatcherWndProc;
 	klass.hInstance = hInstance;
 	klass.hbrBackground = (HBRUSH)(COLOR_WINDOW+1);
-	klass.lpszClassName = _T("ClipWatcherClass");
+	klass.lpszClassName = L"ClipWatcherClass";
 	atom = RegisterClass(&klass);
     }
 
     HWND hWnd = CreateWindow(
-	(LPCTSTR)atom,
-	_T("ClipWatcher"), 
+	(LPCWSTR)atom,
+	L"ClipWatcher", 
 	(WS_OVERLAPPED | WS_SYSMENU),
 	CW_USEDEFAULT, CW_USEDEFAULT,
 	CW_USEDEFAULT, CW_USEDEFAULT,
@@ -518,8 +498,19 @@ int WinMain(HINSTANCE hInstance,
 }
 
 
+// WinMain and wmain
 
-int main(int argc, char* argv[])
+int WinMain(HINSTANCE hInstance, 
+	    HINSTANCE hPrevInstance, 
+	    LPSTR lpCmdLine,
+	    int nCmdShow)
 {
-    return WinMain(GetModuleHandle(NULL), NULL, NULL, 0);
+    int argc;
+    LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+    return ClipWatcherMain(hInstance, hPrevInstance, nCmdShow, argc, argv);
+}
+
+int wmain(int argc, wchar_t* argv[])
+{
+    return ClipWatcherMain(GetModuleHandle(NULL), NULL, 0, argc, argv);
 }
