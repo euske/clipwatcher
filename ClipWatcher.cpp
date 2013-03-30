@@ -10,8 +10,11 @@
 #pragma comment(lib, "user32.lib")
 #pragma comment(lib, "shell32.lib")
 
+const LPCWSTR DEFAULT_CLIPPATH = L"Dropbox\\Clipboard";
+const DWORD MAX_FILE_SIZE = 32767;
 const UINT WM_NOTIFY_ICON = WM_USER+1;
 const UINT WM_NOTIFY_FILE = WM_NOTIFY_ICON+1;
+const UINT ICON_ID = 1;
 
 typedef enum _MenuItemID {
     ITEM_NONE = 0,
@@ -19,8 +22,54 @@ typedef enum _MenuItemID {
     ITEM_OPEN,
 };
 
-const UINT ICON_ID = 1;
+static LPWSTR getWCHARfromCHAR(LPCSTR bytes, int nbytes, int* pnchars)
+{
+    int nchars = MultiByteToWideChar(CP_ACP, 0, bytes, nbytes, NULL, 0);
+    LPWSTR chars = (LPWSTR) malloc(sizeof(WCHAR)*(nchars+1));
+    if (chars != NULL) {
+	MultiByteToWideChar(CP_ACP, 0, bytes, nbytes, chars, nchars);
+	chars[nchars] = L'\0';
+	if (pnchars != NULL) {
+	    *pnchars = nchars;
+	}
+    }
+    return chars;
+}
 
+static LPSTR getCHARfromWCHAR(LPCWSTR chars, int nchars, int* pnbytes)
+{
+    int nbytes = WideCharToMultiByte(CP_ACP, 0, chars, nchars, 
+				     NULL, 0, NULL, NULL);
+    LPSTR bytes = (LPSTR) malloc(sizeof(CHAR)*(nbytes+1));
+    if (bytes != NULL) {
+	WideCharToMultiByte(CP_ACP, 0, chars, nchars, 
+			    (LPSTR)bytes, nbytes, NULL, NULL);
+	bytes[nbytes] = 0;
+	if (pnbytes != NULL) {
+	    *pnbytes = nbytes;
+	}
+    }
+    return bytes;
+}
+
+static LPWSTR ristrip(LPCWSTR text1, LPCWSTR text2)
+{
+    int len1 = wcslen(text1);
+    int len2 = wcslen(text2);
+    int dstlen = len1;
+    if (len2 < len1 && wcsicmp(&text1[len1-len2], text2) == 0) {
+	dstlen -= len2;
+    }
+
+    LPWSTR dst = (LPWSTR) malloc(sizeof(WCHAR)*(dstlen+1));
+    if (dst != NULL) {
+	StringCchCopy(dst, dstlen+1, text1);
+    }
+    return dst;
+}
+
+
+//  FileEntry
 // 
 typedef struct _FileEntry {
     WCHAR name[MAX_PATH];
@@ -73,28 +122,33 @@ static FileEntry* checkFileChanges(ClipWatcher* watcher)
     if (fft == NULL) goto fail;
     
     for (;;) {
-	fwprintf(stderr, L"name=%s\n", data.cFileName);
 	WCHAR path[MAX_PATH];
 	StringCbPrintf(path, sizeof(path), L"%s\\%s", 
 		       watcher->watchdir, data.cFileName);
 	HANDLE fp = CreateFile(path, GENERIC_READ, FILE_SHARE_READ,
 			       NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 
 			       NULL);
-	if (fp != NULL) {
+	if (fp != INVALID_HANDLE_VALUE) {
 	    FILETIME mtime;
-	    GetFileTime(fp, NULL, NULL, &mtime);
-	    CloseHandle(fp);
-	    FileEntry* entry = findFileEntry(watcher->files, data.cFileName);
-	    if (entry == NULL) {
-		entry = (FileEntry*) malloc(sizeof(FileEntry));
-		StringCbCopy(entry->name, sizeof(entry->name), data.cFileName);
-		entry->mtime = mtime;
-		entry->next = watcher->files;
-		watcher->files = entry;
-		found = entry;
-	    } else if (0 < CompareFileTime(&mtime, &entry->mtime)) {
-		entry->mtime = mtime;
-		found = entry;
+	    if (GetFileTime(fp, NULL, NULL, &mtime)) {
+		LPWSTR name = ristrip(data.cFileName, L".txt");
+		if (name != NULL) {
+		    FileEntry* entry = findFileEntry(watcher->files, name);
+		    if (entry == NULL) {
+			fwprintf(stderr, L"added: %s\n", name);
+			entry = (FileEntry*) malloc(sizeof(FileEntry));
+			StringCbCopy(entry->name, sizeof(entry->name), name);
+			entry->mtime = mtime;
+			entry->next = watcher->files;
+			watcher->files = entry;
+			found = entry;
+		    } else if (0 < CompareFileTime(&mtime, &entry->mtime)) {
+			fwprintf(stderr, L"updated: %s\n", name);
+			entry->mtime = mtime;
+			found = entry;
+		    }
+		}
+		CloseHandle(fp);
 	    }
 	}
 	if (!FindNextFile(fft, &data)) break;
@@ -106,7 +160,7 @@ fail:
 }
 
 // writeClipText(watcher, text)
-static void writeClipText(ClipWatcher* watcher, LPCWSTR text)
+static void writeClipText(ClipWatcher* watcher, LPCWSTR text, int nchars)
 {
     WCHAR path[MAX_PATH];
     StringCbPrintf(path, sizeof(path), L"%s\\%s.txt", 
@@ -115,48 +169,47 @@ static void writeClipText(ClipWatcher* watcher, LPCWSTR text)
     HANDLE fp = CreateFile(path, GENERIC_WRITE, FILE_SHARE_READ,
 			   NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, 
 			   NULL);
-    if (fp != NULL) {
-	fwprintf(stderr, L"write file: path=%s\n", path);
-	int nbytes = WideCharToMultiByte(CP_ACP, 0, text, -1, NULL, 0, NULL, NULL);
-	BYTE* bytes = (BYTE*) malloc(sizeof(BYTE)*(nbytes+1));
-	WideCharToMultiByte(CP_ACP, 0, text, -1, (LPSTR)bytes, nbytes, NULL, NULL);
-	DWORD written;
-	WriteFile(fp, bytes, nbytes, &written, NULL);
+    if (fp != INVALID_HANDLE_VALUE) {
+	int nbytes;
+	LPSTR bytes = getCHARfromWCHAR(text, nchars, &nbytes);
+	nbytes--;
+	fwprintf(stderr, L"write file: path=%s, nbytes=%d\n", path, nbytes);
+	if (bytes != NULL) {
+	    DWORD writtenbytes;
+	    WriteFile(fp, bytes, nbytes, &writtenbytes, NULL);
+	    free(bytes);
+	}
 	CloseHandle(fp);
     }
 }
 
 // readClipText(watcher, text)
-static LPWSTR readClipText(ClipWatcher* watcher, LPCWSTR name)
+static LPWSTR readClipText(ClipWatcher* watcher, LPCWSTR name, int* nchars)
 {
+    LPWSTR text = NULL;
+
     WCHAR path[MAX_PATH];
-    StringCbPrintf(path, sizeof(path), L"%s\\%s", 
+    StringCbPrintf(path, sizeof(path), L"%s\\%s.txt", 
 		   watcher->watchdir, name);
-    
     HANDLE fp = CreateFile(path, GENERIC_READ, FILE_SHARE_READ,
 			   NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 
 			   NULL);
-    LPWSTR text = NULL;
-    WCHAR* chars = NULL;
-    BYTE* bytes = NULL;
-    if (fp != NULL) {
+    if (fp != INVALID_HANDLE_VALUE) {
 	DWORD nbytes = GetFileSize(fp, NULL);
-	bytes = (BYTE*) malloc(nbytes+1);
+	if (MAX_FILE_SIZE < nbytes) {
+	    nbytes = MAX_FILE_SIZE;
+	}
+	fwprintf(stderr, L"read file: path=%s, nbytes=%u\n", path, nbytes);
+	LPSTR bytes = (LPSTR) malloc(nbytes);
 	if (bytes != NULL) {
-	    DWORD read;
-	    ReadFile(fp, bytes, nbytes, &read, NULL);
-	    int nchars = MultiByteToWideChar(CP_ACP, 0, (LPSTR)bytes, nbytes, NULL, 0);
-	    chars = (WCHAR*) malloc(sizeof(WCHAR)*(nchars+1));
-	    if (chars != NULL) {
-		MultiByteToWideChar(CP_ACP, 0, (LPSTR)bytes, nbytes, chars, nchars);
-	    }
+	    DWORD readbytes;
+	    ReadFile(fp, bytes, nbytes, &readbytes, NULL);
+	    text = getWCHARfromCHAR(bytes, (int)readbytes, nchars);
+	    free(bytes);
 	}
 	CloseHandle(fp);
     }
 
-    if (chars != NULL) {
-	text = chars;
-    }
     return text;
 }
 
@@ -306,21 +359,21 @@ static LRESULT CALLBACK clipWatcherWndProc(
 	ClipWatcher* watcher = (ClipWatcher*)lp;
 	if (watcher != NULL) {
 	    if (OpenClipboard(hWnd)) {
+		fwprintf(stderr, L"clipboard changed.\n");
 		HANDLE data = GetClipboardData(CF_TEXT);
 		if (data != NULL) {
-		    fwprintf(stderr, L"open clip\n");
-		    LPCSTR rawtext = (LPCSTR) GlobalLock(data);
-		    if (rawtext != NULL) {
-			LPWSTR text;
-			int nchars = MultiByteToWideChar(CP_ACP, 0, rawtext, -1, NULL, 0);
-			text = (LPWSTR)malloc(sizeof(WCHAR)*(nchars+1));
-			MultiByteToWideChar(CP_ACP, 0, rawtext, -1, text, nchars);
-			if (watcher->writefile) {
-			    writeClipText(watcher, text);
+		    LPSTR bytes = (LPSTR) GlobalLock(data);
+		    if (bytes != NULL) {
+			int nchars;
+			LPWSTR text = getWCHARfromCHAR(bytes, GlobalSize(data), &nchars);
+			if (text != NULL) {
+			    if (watcher->writefile) {
+				writeClipText(watcher, text, nchars);
+			    }
+			    watcher->writefile = TRUE;
+			    popupInfo(hWnd, L"Clipboard Updated", text);
+			    free(text);
 			}
-			watcher->writefile = TRUE;
-			popupInfo(hWnd, L"Clipboard Updated", text);
-			free(text);
 			GlobalUnlock(data);
 		    }
 		}
@@ -359,35 +412,30 @@ static LRESULT CALLBACK clipWatcherWndProc(
 	if (watcher != NULL) {
 	    FileEntry* entry = checkFileChanges(watcher);
 	    if (entry != NULL) {
-		LPWSTR text = readClipText(watcher, entry->name);
+		fwprintf(stderr, L"file changed: %s\n", entry->name);
+		int nchars;
+		LPWSTR text = readClipText(watcher, entry->name, &nchars);
 		if (text != NULL) {
 		    int nbytes;
-		    HANDLE data;
-		    nbytes = WideCharToMultiByte(CP_ACP, 0, text, -1, NULL, 0, NULL, NULL);
-		    data = GlobalAlloc(GHND, nbytes);
-		    if (data != NULL) {
-			BYTE* bytes = (BYTE*) GlobalLock(data);
-			WideCharToMultiByte(CP_ACP, 0, text, -1, (LPSTR)bytes, nbytes, NULL, NULL);
-			if (OpenClipboard(hWnd)) {
-			    watcher->writefile = FALSE;
-			    SetClipboardData(CF_TEXT, data);
-			    CloseClipboard();
+		    LPSTR src = getCHARfromWCHAR(text, nchars, &nbytes);
+		    if (src != NULL) {
+			HANDLE data = GlobalAlloc(GHND, nbytes+1);
+			if (data != NULL) {
+			    LPSTR dst = (LPSTR) GlobalLock(data);
+			    if (dst != NULL) {
+				CopyMemory(dst, src, nbytes+1);
+				GlobalUnlock(data);
+			    }
+			    if (OpenClipboard(hWnd)) {
+				watcher->writefile = FALSE;
+				SetClipboardData(CF_TEXT, data);
+				CloseClipboard();
+			    }
+			    GlobalFree(data);
 			}
-			GlobalUnlock(data);
-			GlobalFree(data);
+			free(src);
 		    }
 		    free(text);
-		}
-		
-		WCHAR path[MAX_PATH];
-		StringCbPrintf(path, sizeof(path), L"%s\\%s", 
-			       watcher->watchdir, entry->name);
-		fwprintf(stderr, L"open file: path=%s\n", path);
-		HANDLE fp = CreateFile(path, GENERIC_READ, FILE_SHARE_READ,
-				       NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 
-				       NULL);
-		if (fp != NULL) {
-		    CloseHandle(fp);
 		}
 	    }
 	}
@@ -424,7 +472,7 @@ int ClipWatcherMain(
     int nCmdShow,
     int argc, LPWSTR* argv)
 {
-    LPCWSTR clippath = L"Dropbox\\Clipboard";
+    LPCWSTR clippath = DEFAULT_CLIPPATH;
     if (2 <= argc) {
 	clippath = argv[1];
     }
@@ -438,11 +486,12 @@ int ClipWatcherMain(
     StringCbPrintf(clipdir, sizeof(clipdir), L"%s\\%s", 
 		   home, clippath);
 
+    // Obtain the computer name.
     WCHAR name[MAX_COMPUTERNAME_LENGTH+1];
     DWORD namelen = sizeof(name);
     GetComputerName(name, &namelen);
-    ClipWatcher* watcher = CreateClipWatcher(clipdir, name);
 
+    // Register the window class.
     ATOM atom;
     {
 	WNDCLASS klass;
@@ -454,6 +503,11 @@ int ClipWatcherMain(
 	atom = RegisterClass(&klass);
     }
 
+    // Create a ClipWatcher object.
+    ClipWatcher* watcher = CreateClipWatcher(clipdir, name);
+    checkFileChanges(watcher);
+
+    // Create a SysTray window.
     HWND hWnd = CreateWindow(
 	(LPCWSTR)atom,
 	L"ClipWatcher", 
@@ -463,6 +517,7 @@ int ClipWatcherMain(
 	NULL, NULL, hInstance, watcher);
     UpdateWindow(hWnd);
 
+    // Event loop.
     MSG msg;
     BOOL loop = TRUE;
     while (loop) {
@@ -492,6 +547,7 @@ int ClipWatcherMain(
 	}
     }
 
+    // Clean up.
     DestroyClipWatcher(watcher);
 
     return msg.wParam;
