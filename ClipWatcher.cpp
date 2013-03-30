@@ -53,6 +53,7 @@ static LPSTR getCHARfromWCHAR(LPCWSTR chars, int nchars, int* pnbytes)
     return bytes;
 }
 
+// ristrip(text1, text2)
 static LPWSTR ristrip(LPCWSTR text1, LPCWSTR text2)
 {
     int len1 = wcslen(text1);
@@ -69,15 +70,17 @@ static LPWSTR ristrip(LPCWSTR text1, LPCWSTR text2)
     return dst;
 }
 
+// istartswith(text1, text2)
 static int istartswith(LPCWSTR text1, LPCWSTR text2)
 {
-    while (*text1 != 0 && *text2 != 0) {
+    while (*text1 != 0 && *text2 != 0 && *text1 == *text2) {
 	text1++;
 	text2++;
     }
     return (*text2 == 0);
 }
 
+// createGlobalText(text, nchars)
 static HANDLE createGlobalText(LPCWSTR text, int nchars)
 {
     HANDLE data = NULL;
@@ -97,13 +100,67 @@ static HANDLE createGlobalText(LPCWSTR text, int nchars)
     return data;
 }
 
-static void openClipText(LPCWSTR text)
+// writeClipText(path, text, nchars)
+static void writeClipText(LPCWSTR path, LPCWSTR text, int nchars)
+{
+    HANDLE fp = CreateFile(path, GENERIC_WRITE, FILE_SHARE_READ,
+			   NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, 
+			   NULL);
+    if (fp != INVALID_HANDLE_VALUE) {
+	int nbytes;
+	LPSTR bytes = getCHARfromWCHAR(text, nchars, &nbytes);
+	nbytes--;
+	fwprintf(stderr, L"write file: path=%s, nbytes=%d\n", path, nbytes);
+	if (bytes != NULL) {
+	    DWORD writtenbytes;
+	    WriteFile(fp, bytes, nbytes, &writtenbytes, NULL);
+	    free(bytes);
+	}
+	CloseHandle(fp);
+    }
+}
+
+// readClipText(path, &nchars)
+static LPWSTR readClipText(LPCWSTR path, int* nchars)
+{
+    LPWSTR text = NULL;
+    HANDLE fp = CreateFile(path, GENERIC_READ, FILE_SHARE_READ,
+			   NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 
+			   NULL);
+    if (fp != INVALID_HANDLE_VALUE) {
+	DWORD nbytes = GetFileSize(fp, NULL);
+	if (MAX_FILE_SIZE < nbytes) {
+	    nbytes = MAX_FILE_SIZE;
+	}
+	fwprintf(stderr, L"read file: path=%s, nbytes=%u\n", path, nbytes);
+	LPSTR bytes = (LPSTR) malloc(nbytes);
+	if (bytes != NULL) {
+	    DWORD readbytes;
+	    ReadFile(fp, bytes, nbytes, &readbytes, NULL);
+	    text = getWCHARfromCHAR(bytes, (int)readbytes, nchars);
+	    free(bytes);
+	}
+	CloseHandle(fp);
+    }
+
+    return text;
+}
+
+// openClipText(text, name, nchars)
+static void openClipText(LPCWSTR text, LPCWSTR name, int nchars)
 {
     if (istartswith(text, L"http://") ||
 	istartswith(text, L"https://")) {
 	ShellExecute(NULL, L"open", text, NULL, NULL, SW_SHOWDEFAULT);
     } else {
-	// XXX
+	WCHAR temppath[MAX_PATH];
+	GetTempPath(MAX_PATH, temppath);
+	WCHAR path[MAX_PATH];
+	StringCbPrintf(path, sizeof(path), L"%s\\%s.txt", 
+		       temppath, name);
+	fwprintf(stderr, L"open file: path=%s\n", path);
+	writeClipText(path, text, nchars);
+	ShellExecute(NULL, L"open", path, NULL, NULL, SW_SHOWDEFAULT);
     }
 }
 
@@ -195,60 +252,6 @@ static FileEntry* checkFileChanges(ClipWatcher* watcher)
 
 fail:
     return found;
-}
-
-// writeClipText(watcher, text)
-static void writeClipText(ClipWatcher* watcher, LPCWSTR text, int nchars)
-{
-    WCHAR path[MAX_PATH];
-    StringCbPrintf(path, sizeof(path), L"%s\\%s.txt", 
-		   watcher->watchdir, watcher->name);
-
-    HANDLE fp = CreateFile(path, GENERIC_WRITE, FILE_SHARE_READ,
-			   NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, 
-			   NULL);
-    if (fp != INVALID_HANDLE_VALUE) {
-	int nbytes;
-	LPSTR bytes = getCHARfromWCHAR(text, nchars, &nbytes);
-	nbytes--;
-	fwprintf(stderr, L"write file: path=%s, nbytes=%d\n", path, nbytes);
-	if (bytes != NULL) {
-	    DWORD writtenbytes;
-	    WriteFile(fp, bytes, nbytes, &writtenbytes, NULL);
-	    free(bytes);
-	}
-	CloseHandle(fp);
-    }
-}
-
-// readClipText(watcher, text)
-static LPWSTR readClipText(ClipWatcher* watcher, LPCWSTR name, int* nchars)
-{
-    LPWSTR text = NULL;
-
-    WCHAR path[MAX_PATH];
-    StringCbPrintf(path, sizeof(path), L"%s\\%s.txt", 
-		   watcher->watchdir, name);
-    HANDLE fp = CreateFile(path, GENERIC_READ, FILE_SHARE_READ,
-			   NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 
-			   NULL);
-    if (fp != INVALID_HANDLE_VALUE) {
-	DWORD nbytes = GetFileSize(fp, NULL);
-	if (MAX_FILE_SIZE < nbytes) {
-	    nbytes = MAX_FILE_SIZE;
-	}
-	fwprintf(stderr, L"read file: path=%s, nbytes=%u\n", path, nbytes);
-	LPSTR bytes = (LPSTR) malloc(nbytes);
-	if (bytes != NULL) {
-	    DWORD readbytes;
-	    ReadFile(fp, bytes, nbytes, &readbytes, NULL);
-	    text = getWCHARfromCHAR(bytes, (int)readbytes, nchars);
-	    free(bytes);
-	}
-	CloseHandle(fp);
-    }
-
-    return text;
 }
 
 //  CreateClipWatcher
@@ -407,7 +410,10 @@ static LRESULT CALLBACK clipWatcherWndProc(
 			LPWSTR text = getWCHARfromCHAR(bytes, GlobalSize(data), &nchars);
 			if (text != NULL) {
 			    if (hostname == NULL) {
-				writeClipText(watcher, text, nchars);
+				WCHAR path[MAX_PATH];
+				StringCbPrintf(path, sizeof(path), L"%s\\%s.txt", 
+					       watcher->watchdir, watcher->name);
+				writeClipText(path, text, nchars);
 			    }
 			    popupInfo(hWnd, L"Clipboard Updated", text);
 			    free(text);
@@ -451,8 +457,11 @@ static LRESULT CALLBACK clipWatcherWndProc(
 	    FileEntry* entry = checkFileChanges(watcher);
 	    if (entry != NULL) {
 		fwprintf(stderr, L"file changed: %s\n", entry->name);
+		WCHAR path[MAX_PATH];
+		StringCbPrintf(path, sizeof(path), L"%s\\%s.txt", 
+			       watcher->watchdir, entry->name);
 		int nchars;
-		LPWSTR text = readClipText(watcher, entry->name, &nchars);
+		LPWSTR text = readClipText(path, &nchars);
 		if (text != NULL) {
 		    HANDLE data = createGlobalText(text, nchars);
 		    if (data != NULL) {
@@ -476,23 +485,27 @@ static LRESULT CALLBACK clipWatcherWndProc(
 
     case WM_COMMAND:
     {
+	LONG_PTR lp = GetWindowLongPtr(hWnd, GWLP_USERDATA);
+	ClipWatcher* watcher = (ClipWatcher*)lp;
 	switch (LOWORD(wParam)) {
 	case ITEM_OPEN:
-	    if (OpenClipboard(hWnd)) {
-		HANDLE data = GetClipboardData(CF_TEXT);
-		if (data != NULL) {
-		    LPSTR bytes = (LPSTR) GlobalLock(data);
-		    if (bytes != NULL) {
-			int nchars;
-			LPWSTR text = getWCHARfromCHAR(bytes, GlobalSize(data), &nchars);
-			if (text != NULL) {
-			    openClipText(text);
-			    free(text);
+	    if (watcher != NULL) {
+		if (OpenClipboard(hWnd)) {
+		    HANDLE data = GetClipboardData(CF_TEXT);
+		    if (data != NULL) {
+			LPSTR bytes = (LPSTR) GlobalLock(data);
+			if (bytes != NULL) {
+			    int nchars;
+			    LPWSTR text = getWCHARfromCHAR(bytes, GlobalSize(data), &nchars);
+			    if (text != NULL) {
+				openClipText(text, watcher->name, nchars);
+				free(text);
+			    }
+			    GlobalUnlock(data);
 			}
-			GlobalUnlock(data);
 		    }
+		    CloseClipboard();
 		}
-		CloseClipboard();
 	    }
 	    break;
 	case ITEM_EXIT:
@@ -606,7 +619,7 @@ int ClipWatcherMain(
 
 
 // WinMain and wmain
-
+#ifdef WINDOWS
 int WinMain(HINSTANCE hInstance, 
 	    HINSTANCE hPrevInstance, 
 	    LPSTR lpCmdLine,
@@ -616,8 +629,9 @@ int WinMain(HINSTANCE hInstance,
     LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
     return ClipWatcherMain(hInstance, hPrevInstance, nCmdShow, argc, argv);
 }
-
+#else
 int wmain(int argc, wchar_t* argv[])
 {
     return ClipWatcherMain(GetModuleHandle(NULL), NULL, 0, argc, argv);
 }
+#endif
