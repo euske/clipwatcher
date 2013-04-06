@@ -146,12 +146,24 @@ static LPWSTR readClipText(LPCWSTR path, int* nchars)
     return text;
 }
 
-// openClipText(text, name, nchars)
-static void openClipText(LPCWSTR text, LPCWSTR name, int nchars)
+// openClipText(name, text, nchars)
+static void openClipText(LPCWSTR name, LPCWSTR text, int nchars)
 {
     if (istartswith(text, L"http://") ||
 	istartswith(text, L"https://")) {
-	ShellExecute(NULL, L"open", text, NULL, NULL, SW_SHOWDEFAULT);
+	LPWSTR url = (LPWSTR) malloc(sizeof(WCHAR)*(nchars+1));
+	if (url != NULL) {
+	    WCHAR* p = url;
+	    for (int i = 0; i < nchars; i++) {
+		WCHAR c = text[i];
+		if (L' ' < c) {
+		    *(p++) = c;
+		}
+	    }
+	    *p = L'\0';
+	    ShellExecute(NULL, L"open", url, NULL, NULL, SW_SHOWDEFAULT);
+	    free(url);
+	}
     } else {
 	WCHAR temppath[MAX_PATH];
 	GetTempPath(MAX_PATH, temppath);
@@ -498,7 +510,7 @@ static LRESULT CALLBACK clipWatcherWndProc(
 			    int nchars;
 			    LPWSTR text = getWCHARfromCHAR(bytes, GlobalSize(data), &nchars);
 			    if (text != NULL) {
-				openClipText(text, watcher->name, nchars);
+				openClipText(watcher->name, text, nchars);
 				free(text);
 			    }
 			    GlobalUnlock(data);
