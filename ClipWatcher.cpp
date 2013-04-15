@@ -6,11 +6,17 @@
 #include <Windows.h>
 #include <StrSafe.h>
 #include <Shlobj.h>
+#include "Resource.h"
 
 #pragma comment(lib, "user32.lib")
 #pragma comment(lib, "shell32.lib")
 
 const LPCWSTR DEFAULT_CLIPPATH = L"Dropbox\\Clipboard";
+const LPCWSTR WINDOW_TITLE = L"ClipWatcher";
+const LPCWSTR WATCHING_DIR = L"Watching: %s";
+const LPCWSTR CLIPBOARD_UPDATED = L"Clipboard Updated";
+
+const LPCWSTR OP_OPEN = L"open";
 const DWORD MAX_FILE_SIZE = 32767;
 const UINT WM_NOTIFY_ICON = WM_USER+1;
 const UINT WM_NOTIFY_FILE = WM_NOTIFY_ICON+1;
@@ -18,9 +24,9 @@ const UINT ICON_ID = 1;
 UINT CF_HOSTNAME;
 
 typedef enum _MenuItemID {
-    ITEM_NONE = 0,
-    ITEM_EXIT,
-    ITEM_OPEN,
+    IDM_NONE = 0,
+    IDM_EXIT,
+    IDM_OPEN,
 };
 
 static LPWSTR getWCHARfromCHAR(LPCSTR bytes, int nbytes, int* pnchars)
@@ -161,18 +167,17 @@ static void openClipText(LPCWSTR name, LPCWSTR text, int nchars)
 		}
 	    }
 	    *p = L'\0';
-	    ShellExecute(NULL, L"open", url, NULL, NULL, SW_SHOWDEFAULT);
+	    ShellExecute(NULL, OP_OPEN, url, NULL, NULL, SW_SHOWDEFAULT);
 	    free(url);
 	}
     } else {
 	WCHAR temppath[MAX_PATH];
 	GetTempPath(MAX_PATH, temppath);
 	WCHAR path[MAX_PATH];
-	StringCbPrintf(path, sizeof(path), L"%s\\%s.txt", 
-		       temppath, name);
+	StringCbPrintf(path, sizeof(path), L"%s\\%s.txt", temppath, name);
 	fwprintf(stderr, L"open file: path=%s\n", path);
 	writeClipText(path, text, nchars);
-	ShellExecute(NULL, L"open", path, NULL, NULL, SW_SHOWDEFAULT);
+	ShellExecute(NULL, OP_OPEN, path, NULL, NULL, SW_SHOWDEFAULT);
     }
 }
 
@@ -219,8 +224,7 @@ static void freeFileEntries(FileEntry* entry)
 static FileEntry* checkFileChanges(ClipWatcher* watcher)
 {
     WCHAR dirpath[MAX_PATH];
-    StringCbPrintf(dirpath, sizeof(dirpath), L"%s\\*.txt", 
-		   watcher->watchdir);
+    StringCbPrintf(dirpath, sizeof(dirpath), L"%s\\*.txt", watcher->watchdir);
 
     WIN32_FIND_DATA data;
     FileEntry* found = NULL;
@@ -329,9 +333,9 @@ static void displayContextMenu(HWND hWnd, POINT pt)
     HMENU menu = CreatePopupMenu();
     if (menu != NULL) {
 	AppendMenu(menu, MF_STRING | MF_ENABLED,
-		   ITEM_OPEN, L"Open");
+		   IDM_OPEN, L"Open");
 	AppendMenu(menu, MF_STRING | MF_ENABLED,
-		   ITEM_EXIT, L"Exit");
+		   IDM_EXIT, L"Exit");
 	TrackPopupMenu(menu, TPM_LEFTALIGN, 
 		       pt.x, pt.y, 0, hWnd, NULL);
 	DestroyMenu(menu);
@@ -364,10 +368,9 @@ static LRESULT CALLBACK clipWatcherWndProc(
 	    nidata.uID = ICON_ID;
 	    nidata.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
 	    nidata.uCallbackMessage = WM_NOTIFY_ICON;
-	    nidata.hIcon = LoadIcon(NULL, IDI_INFORMATION);
+	    nidata.hIcon = (HICON) GetClassLongPtr(hWnd, GCLP_HICON);
 	    StringCbPrintf(nidata.szTip, sizeof(nidata.szTip),
-			   L"Watching: %s", 
-			   watcher->watchdir);
+			   WATCHING_DIR, watcher->watchdir);
 	    Shell_NotifyIcon(NIM_ADD, &nidata);
 	}
 	return FALSE;
@@ -427,7 +430,7 @@ static LRESULT CALLBACK clipWatcherWndProc(
 					       watcher->watchdir, watcher->name);
 				writeClipText(path, text, nchars);
 			    }
-			    popupInfo(hWnd, L"Clipboard Updated", text);
+			    popupInfo(hWnd, CLIPBOARD_UPDATED, text);
 			    free(text);
 			}
 			GlobalUnlock(data);
@@ -446,7 +449,7 @@ static LRESULT CALLBACK clipWatcherWndProc(
 	switch (lParam) {
 	case WM_LBUTTONDBLCLK:
 	    SendMessage(hWnd, WM_COMMAND, 
-			MAKEWPARAM(ITEM_OPEN, 1), NULL);
+			MAKEWPARAM(IDM_OPEN, 1), NULL);
 	    break;
 	case WM_LBUTTONUP:
 	    break;
@@ -500,7 +503,7 @@ static LRESULT CALLBACK clipWatcherWndProc(
 	LONG_PTR lp = GetWindowLongPtr(hWnd, GWLP_USERDATA);
 	ClipWatcher* watcher = (ClipWatcher*)lp;
 	switch (LOWORD(wParam)) {
-	case ITEM_OPEN:
+	case IDM_OPEN:
 	    if (watcher != NULL) {
 		if (OpenClipboard(hWnd)) {
 		    HANDLE data = GetClipboardData(CF_TEXT);
@@ -520,7 +523,7 @@ static LRESULT CALLBACK clipWatcherWndProc(
 		}
 	    }
 	    break;
-	case ITEM_EXIT:
+	case IDM_EXIT:
 	    SendMessage(hWnd, WM_CLOSE, 0, 0);
 	    break;
 	}
@@ -545,6 +548,12 @@ int ClipWatcherMain(
     int nCmdShow,
     int argc, LPWSTR* argv)
 {
+    HANDLE mutex = CreateMutex(NULL, TRUE, L"ClipWatcher");
+    if (GetLastError() == ERROR_ALREADY_EXISTS) {
+	CloseHandle(mutex);
+	return 0;
+    }
+
     LPCWSTR clippath = DEFAULT_CLIPPATH;
     if (2 <= argc) {
 	clippath = argv[1];
@@ -574,6 +583,7 @@ int ClipWatcherMain(
 	ZeroMemory(&klass, sizeof(klass));
 	klass.lpfnWndProc = clipWatcherWndProc;
 	klass.hInstance = hInstance;
+	klass.hIcon = LoadIcon(hInstance, MAKEINTRESOURCE(IDI_CLIPWATCHER));
 	klass.hbrBackground = (HBRUSH)(COLOR_WINDOW+1);
 	klass.lpszClassName = L"ClipWatcherClass";
 	atom = RegisterClass(&klass);
@@ -586,7 +596,7 @@ int ClipWatcherMain(
     // Create a SysTray window.
     HWND hWnd = CreateWindow(
 	(LPCWSTR)atom,
-	L"ClipWatcher", 
+	WINDOW_TITLE,
 	(WS_OVERLAPPED | WS_SYSMENU),
 	CW_USEDEFAULT, CW_USEDEFAULT,
 	CW_USEDEFAULT, CW_USEDEFAULT,
@@ -626,7 +636,7 @@ int ClipWatcherMain(
     // Clean up.
     DestroyClipWatcher(watcher);
 
-    return msg.wParam;
+    return (int)msg.wParam;
 }
 
 

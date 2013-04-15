@@ -1,0 +1,2 @@
+#define IDI_CLIPWATCHER 100
+

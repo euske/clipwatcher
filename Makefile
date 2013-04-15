@@ -27,7 +27,8 @@ $(TARGET): $(OBJS)
 	$(LINK) $(LDFLAGS) /manifest /out:$@ $** $(LIBS)
 	$(MT) -manifest $@.manifest -outputresource:$@;1
 
-ClipWatcher.obj: ClipWatcher.cpp
+ClipWatcher.cpp: Resource.h
+ClipWatcher.rc: Resource.h ClipWatcher.ico
 
 .cpp.obj:
 	$(CL) $(CFLAGS) /Fo$@ /c $< $(DEFS) $(INCLUDES)
