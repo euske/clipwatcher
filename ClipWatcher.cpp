@@ -15,13 +15,13 @@ const LPCWSTR DEFAULT_CLIPPATH = L"Dropbox\\Clipboard";
 const LPCWSTR WINDOW_TITLE = L"ClipWatcher";
 const LPCWSTR WATCHING_DIR = L"Watching: %s";
 const LPCWSTR CLIPBOARD_UPDATED = L"Clipboard Updated";
+const LPCWSTR DIRECTORY_NOTFOUND = L"Directory not found: %s";
 
 const LPCWSTR OP_OPEN = L"open";
 const DWORD MAX_FILE_SIZE = 32767;
 const UINT WM_NOTIFY_ICON = WM_USER+1;
 const UINT WM_NOTIFY_FILE = WM_NOTIFY_ICON+1;
 const UINT ICON_ID = 1;
-UINT CF_HOSTNAME;
 
 typedef enum _MenuItemID {
     IDM_NONE = 0,
@@ -175,7 +175,6 @@ static void openClipText(LPCWSTR name, LPCWSTR text, int nchars)
 	GetTempPath(MAX_PATH, temppath);
 	WCHAR path[MAX_PATH];
 	StringCbPrintf(path, sizeof(path), L"%s\\%s.txt", temppath, name);
-	fwprintf(stderr, L"open file: path=%s\n", path);
 	writeClipText(path, text, nchars);
 	ShellExecute(NULL, OP_OPEN, path, NULL, NULL, SW_SHOWDEFAULT);
     }
@@ -196,7 +195,7 @@ typedef struct _ClipWatcher {
     HWND hwndnext;
     LPWSTR watchdir;
     LPWSTR name;
-    HANDLE notifier;
+    UINT ctype;
     FileEntry* files;
 } ClipWatcher;
 
@@ -279,14 +278,9 @@ ClipWatcher* CreateClipWatcher(LPCWSTR watchdir, LPCWSTR name)
 
     watcher->watchdir = wcsdup(watchdir);
     watcher->name = wcsdup(name);
-
-    // Register a file watcher.
-    watcher->notifier = FindFirstChangeNotification(
-	watcher->watchdir, FALSE, 
-	(FILE_NOTIFY_CHANGE_FILE_NAME |
-	 FILE_NOTIFY_CHANGE_LAST_WRITE));
-
     watcher->files = NULL;
+    // Register a clipboard format.
+    watcher->ctype = RegisterClipboardFormat(L"ClipWatcherHostname");
     
     return watcher;
 }
@@ -295,11 +289,6 @@ ClipWatcher* CreateClipWatcher(LPCWSTR watchdir, LPCWSTR name)
 // 
 void DestroyClipWatcher(ClipWatcher* watcher)
 {
-    // Unregister the file watcher;
-    if (watcher->notifier != NULL) {
-	FindCloseChangeNotification(watcher->notifier);
-    }
-
     if (watcher->watchdir != NULL) {
 	free(watcher->watchdir);
     }
@@ -416,7 +405,7 @@ static LRESULT CALLBACK clipWatcherWndProc(
 	if (watcher != NULL) {
 	    if (OpenClipboard(hWnd)) {
 		fwprintf(stderr, L"clipboard changed.\n");
-		HANDLE hostname = GetClipboardData(CF_HOSTNAME);
+		HANDLE hostname = GetClipboardData(watcher->ctype);
 		HANDLE data = GetClipboardData(CF_TEXT);
 		if (data != NULL) {
 		    LPSTR bytes = (LPSTR) GlobalLock(data);
@@ -483,7 +472,7 @@ static LRESULT CALLBACK clipWatcherWndProc(
 			HANDLE hostname = createGlobalText(entry->name, -1);
 			if (hostname != NULL) {
 			    if (OpenClipboard(hWnd)) {
-				SetClipboardData(CF_HOSTNAME, hostname);
+				SetClipboardData(watcher->ctype, hostname);
 				SetClipboardData(CF_TEXT, data);
 				CloseClipboard();
 			    }
@@ -548,17 +537,18 @@ int ClipWatcherMain(
     int nCmdShow,
     int argc, LPWSTR* argv)
 {
-    HANDLE mutex = CreateMutex(NULL, TRUE, L"ClipWatcher");
-    if (GetLastError() == ERROR_ALREADY_EXISTS) {
-	CloseHandle(mutex);
-	return 0;
-    }
-
     LPCWSTR clippath = DEFAULT_CLIPPATH;
     if (2 <= argc) {
 	clippath = argv[1];
     }
 
+    // Prevent a duplicate process.
+    HANDLE mutex = CreateMutex(NULL, TRUE, L"ClipWatcher");
+    if (GetLastError() == ERROR_ALREADY_EXISTS) {
+	CloseHandle(mutex);
+	return 0;
+    }
+    
     // Obtain the home path.
     WCHAR home[MAX_PATH];
     SHGetFolderPath(NULL, CSIDL_PROFILE, NULL, SHGFP_TYPE_CURRENT, home);
@@ -573,8 +563,17 @@ int ClipWatcherMain(
     DWORD namelen = sizeof(name);
     GetComputerName(name, &namelen);
 
-    // Register a clipboard format.
-    CF_HOSTNAME = RegisterClipboardFormat(L"ClipWatcherHostname");
+    // Register a file watcher.
+    HANDLE notifier = FindFirstChangeNotification(
+	clipdir, FALSE, 
+	(FILE_NOTIFY_CHANGE_FILE_NAME |
+	 FILE_NOTIFY_CHANGE_LAST_WRITE));
+    if (notifier == INVALID_HANDLE_VALUE) {
+	WCHAR text[MAX_PATH];
+	StringCbPrintf(text, sizeof(text), DIRECTORY_NOTFOUND, clipdir);
+	MessageBox(NULL, text, L"Error", MB_OK);
+	return 0;
+    }
 
     // Register the window class.
     ATOM atom;
@@ -588,11 +587,11 @@ int ClipWatcherMain(
 	klass.lpszClassName = L"ClipWatcherClass";
 	atom = RegisterClass(&klass);
     }
-
+    
     // Create a ClipWatcher object.
     ClipWatcher* watcher = CreateClipWatcher(clipdir, name);
     checkFileChanges(watcher);
-
+    
     // Create a SysTray window.
     HWND hWnd = CreateWindow(
 	(LPCWSTR)atom,
@@ -607,12 +606,12 @@ int ClipWatcherMain(
     MSG msg;
     BOOL loop = TRUE;
     while (loop) {
-	DWORD obj = MsgWaitForMultipleObjects(1, &watcher->notifier,
+	DWORD obj = MsgWaitForMultipleObjects(1, &notifier,
 					      FALSE, INFINITE, QS_ALLINPUT);
 	switch (obj) {
 	case WAIT_OBJECT_0:
 	    // We got a notification;
-	    FindNextChangeNotification(watcher->notifier);
+	    FindNextChangeNotification(notifier);
 	    PostMessage(hWnd, WM_NOTIFY_FILE, 0, 0);
 	    break;
 	case WAIT_OBJECT_0+1:
@@ -635,6 +634,8 @@ int ClipWatcherMain(
 
     // Clean up.
     DestroyClipWatcher(watcher);
+    // Unregister the file watcher;
+    FindCloseChangeNotification(notifier);
 
     return (int)msg.wParam;
 }
