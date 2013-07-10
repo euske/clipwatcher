@@ -11,7 +11,7 @@
 #pragma comment(lib, "user32.lib")
 #pragma comment(lib, "shell32.lib")
 
-const LPCWSTR DEFAULT_CLIPPATH = L"Dropbox\\Clipboard";
+const LPCWSTR DEFAULT_CLIPPATH = L"Clipboard";
 const LPCWSTR WINDOW_TITLE = L"ClipWatcher";
 const LPCWSTR WATCHING_DIR = L"Watching: %s";
 const LPCWSTR CLIPBOARD_UPDATED = L"Clipboard Updated";
@@ -549,15 +549,18 @@ int ClipWatcherMain(
 	return 0;
     }
     
-    // Obtain the home path.
-    WCHAR home[MAX_PATH];
-    SHGetFolderPath(NULL, CSIDL_PROFILE, NULL, SHGFP_TYPE_CURRENT, home);
-
     // Obtain the clipboard directory path.
     WCHAR clipdir[MAX_PATH];
-    StringCchPrintf(clipdir, _countof(clipdir), L"%s\\%s", 
-		    home, clippath);
-
+    if (GetFileAttributes(clippath) == INVALID_FILE_ATTRIBUTES) {
+	// Obtain the home path.
+	WCHAR home[MAX_PATH];
+	SHGetFolderPath(NULL, CSIDL_PROFILE, NULL, SHGFP_TYPE_CURRENT, home);
+	StringCchPrintf(clipdir, _countof(clipdir), L"%s\\%s", 
+			home, clippath);
+    } else {
+	StringCchCopy(clipdir, _countof(clipdir), clippath);
+    }
+    
     // Obtain the computer name.
     WCHAR name[MAX_COMPUTERNAME_LENGTH+1];
     DWORD namelen = sizeof(name);
