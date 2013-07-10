@@ -1,4 +1,5 @@
 *.exe
 *.obj
 *.pdb
+*.res
 *.manifest
