@@ -174,7 +174,7 @@ static void openClipText(LPCWSTR name, LPCWSTR text, int nchars)
 	WCHAR temppath[MAX_PATH];
 	GetTempPath(MAX_PATH, temppath);
 	WCHAR path[MAX_PATH];
-	StringCbPrintf(path, sizeof(path), L"%s\\%s.txt", temppath, name);
+	StringCchPrintf(path, _countof(path), L"%s\\%s.txt", temppath, name);
 	writeClipText(path, text, nchars);
 	ShellExecute(NULL, OP_OPEN, path, NULL, NULL, SW_SHOWDEFAULT);
     }
@@ -223,7 +223,7 @@ static void freeFileEntries(FileEntry* entry)
 static FileEntry* checkFileChanges(ClipWatcher* watcher)
 {
     WCHAR dirpath[MAX_PATH];
-    StringCbPrintf(dirpath, sizeof(dirpath), L"%s\\*.txt", watcher->watchdir);
+    StringCchPrintf(dirpath, _countof(dirpath), L"%s\\*.txt", watcher->watchdir);
 
     WIN32_FIND_DATA data;
     FileEntry* found = NULL;
@@ -233,8 +233,8 @@ static FileEntry* checkFileChanges(ClipWatcher* watcher)
     
     for (;;) {
 	WCHAR path[MAX_PATH];
-	StringCbPrintf(path, sizeof(path), L"%s\\%s", 
-		       watcher->watchdir, data.cFileName);
+	StringCchPrintf(path, _countof(path), L"%s\\%s", 
+			watcher->watchdir, data.cFileName);
 	HANDLE fp = CreateFile(path, GENERIC_READ, FILE_SHARE_READ,
 			       NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 
 			       NULL);
@@ -247,7 +247,7 @@ static FileEntry* checkFileChanges(ClipWatcher* watcher)
 		    if (entry == NULL) {
 			//fwprintf(stderr, L"added: %s\n", name);
 			entry = (FileEntry*) malloc(sizeof(FileEntry));
-			StringCbCopy(entry->name, sizeof(entry->name), name);
+			StringCchCopy(entry->name, _countof(entry->name), name);
 			entry->mtime = mtime;
 			entry->next = watcher->files;
 			watcher->files = entry;
@@ -311,8 +311,8 @@ static void popupInfo(HWND hWnd, LPCWSTR title, LPCWSTR text)
     nidata.uFlags = NIF_INFO;
     nidata.dwInfoFlags = NIIF_INFO;
     nidata.uTimeout = 1;
-    StringCbCopy(nidata.szInfoTitle, sizeof(nidata.szInfoTitle), title);
-    StringCbCopy(nidata.szInfo, sizeof(nidata.szInfo), text);
+    StringCchCopy(nidata.szInfoTitle, _countof(nidata.szInfoTitle), title);
+    StringCchCopy(nidata.szInfo, _countof(nidata.szInfo), text);
     Shell_NotifyIcon(NIM_MODIFY, &nidata);
 }
 
@@ -358,8 +358,8 @@ static LRESULT CALLBACK clipWatcherWndProc(
 	    nidata.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
 	    nidata.uCallbackMessage = WM_NOTIFY_ICON;
 	    nidata.hIcon = (HICON) GetClassLongPtr(hWnd, GCLP_HICON);
-	    StringCbPrintf(nidata.szTip, sizeof(nidata.szTip),
-			   WATCHING_DIR, watcher->watchdir);
+	    StringCchPrintf(nidata.szTip, _countof(nidata.szTip),
+			    WATCHING_DIR, watcher->watchdir);
 	    Shell_NotifyIcon(NIM_ADD, &nidata);
 	}
 	return FALSE;
@@ -415,8 +415,8 @@ static LRESULT CALLBACK clipWatcherWndProc(
 			if (text != NULL) {
 			    if (hostname == NULL) {
 				WCHAR path[MAX_PATH];
-				StringCbPrintf(path, sizeof(path), L"%s\\%s.txt", 
-					       watcher->watchdir, watcher->name);
+				StringCchPrintf(path, _countof(path), L"%s\\%s.txt", 
+						watcher->watchdir, watcher->name);
 				writeClipText(path, text, nchars);
 			    }
 			    popupInfo(hWnd, CLIPBOARD_UPDATED, text);
@@ -462,8 +462,8 @@ static LRESULT CALLBACK clipWatcherWndProc(
 	    if (entry != NULL) {
 		fwprintf(stderr, L"file changed: %s\n", entry->name);
 		WCHAR path[MAX_PATH];
-		StringCbPrintf(path, sizeof(path), L"%s\\%s.txt", 
-			       watcher->watchdir, entry->name);
+		StringCchPrintf(path, _countof(path), L"%s\\%s.txt", 
+				watcher->watchdir, entry->name);
 		int nchars;
 		LPWSTR text = readClipText(path, &nchars);
 		if (text != NULL) {
@@ -555,8 +555,8 @@ int ClipWatcherMain(
 
     // Obtain the clipboard directory path.
     WCHAR clipdir[MAX_PATH];
-    StringCbPrintf(clipdir, sizeof(clipdir), L"%s\\%s", 
-		   home, clippath);
+    StringCchPrintf(clipdir, _countof(clipdir), L"%s\\%s", 
+		    home, clippath);
 
     // Obtain the computer name.
     WCHAR name[MAX_COMPUTERNAME_LENGTH+1];
@@ -570,7 +570,7 @@ int ClipWatcherMain(
 	 FILE_NOTIFY_CHANGE_LAST_WRITE));
     if (notifier == INVALID_HANDLE_VALUE) {
 	WCHAR text[MAX_PATH];
-	StringCbPrintf(text, sizeof(text), DIRECTORY_NOTFOUND, clipdir);
+	StringCchPrintf(text, _countof(text), DIRECTORY_NOTFOUND, clipdir);
 	MessageBox(NULL, text, L"Error", MB_OK);
 	return 0;
     }
