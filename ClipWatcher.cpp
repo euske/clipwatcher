@@ -23,6 +23,8 @@ const UINT WM_NOTIFY_ICON = WM_USER+1;
 const UINT WM_NOTIFY_FILE = WM_NOTIFY_ICON+1;
 const UINT ICON_ID = 1;
 
+static FILE* logfp = stderr;
+
 typedef enum _MenuItemID {
     IDM_NONE = 0,
     IDM_EXIT,
@@ -116,7 +118,7 @@ static void writeClipText(LPCWSTR path, LPCWSTR text, int nchars)
 	int nbytes;
 	LPSTR bytes = getCHARfromWCHAR(text, nchars, &nbytes);
 	nbytes--;
-	fwprintf(stderr, L"write file: path=%s, nbytes=%d\n", path, nbytes);
+	fwprintf(logfp, L"write file: path=%s, nbytes=%d\n", path, nbytes);
 	if (bytes != NULL) {
 	    DWORD writtenbytes;
 	    WriteFile(fp, bytes, nbytes, &writtenbytes, NULL);
@@ -138,7 +140,7 @@ static LPWSTR readClipText(LPCWSTR path, int* nchars)
 	if (MAX_FILE_SIZE < nbytes) {
 	    nbytes = MAX_FILE_SIZE;
 	}
-	fwprintf(stderr, L"read file: path=%s, nbytes=%u\n", path, nbytes);
+	fwprintf(logfp, L"read file: path=%s, nbytes=%u\n", path, nbytes);
 	LPSTR bytes = (LPSTR) malloc(nbytes);
 	if (bytes != NULL) {
 	    DWORD readbytes;
@@ -242,10 +244,12 @@ static FileEntry* checkFileChanges(ClipWatcher* watcher)
 	    FILETIME mtime;
 	    if (GetFileTime(fp, NULL, NULL, &mtime)) {
 		LPWSTR name = ristrip(data.cFileName, L".txt");
+		fwprintf(logfp, L"mtime: %s: %08x %08x\n", 
+			 name, mtime.dwLowDateTime, mtime.dwHighDateTime);
 		if (name != NULL) {
 		    FileEntry* entry = findFileEntry(watcher->files, name);
 		    if (entry == NULL) {
-			//fwprintf(stderr, L"added: %s\n", name);
+			fwprintf(logfp, L"added: %s\n", name);
 			entry = (FileEntry*) malloc(sizeof(FileEntry));
 			StringCchCopy(entry->name, _countof(entry->name), name);
 			entry->mtime = mtime;
@@ -253,7 +257,7 @@ static FileEntry* checkFileChanges(ClipWatcher* watcher)
 			watcher->files = entry;
 			found = entry;
 		    } else if (0 < CompareFileTime(&mtime, &entry->mtime)) {
-			//fwprintf(stderr, L"updated: %s\n", name);
+			fwprintf(logfp, L"updated: %s\n", name);
 			entry->mtime = mtime;
 			found = entry;
 		    }
@@ -347,7 +351,7 @@ static LRESULT CALLBACK clipWatcherWndProc(
 	ClipWatcher* watcher = (ClipWatcher*)(cs->lpCreateParams);
 	if (watcher != NULL) {
 	    SetWindowLongPtr(hWnd, GWLP_USERDATA, (LONG_PTR)watcher);
-	    fwprintf(stderr, L"watching: %s\n", watcher->name);
+	    fwprintf(logfp, L"watching: %s\n", watcher->name);
 	    // Insert itself into the clipboard viewer chain.
 	    watcher->hwndnext = SetClipboardViewer(hWnd);
 	    // Register the icon.
@@ -404,7 +408,7 @@ static LRESULT CALLBACK clipWatcherWndProc(
 	ClipWatcher* watcher = (ClipWatcher*)lp;
 	if (watcher != NULL) {
 	    if (OpenClipboard(hWnd)) {
-		fwprintf(stderr, L"clipboard changed.\n");
+		fwprintf(logfp, L"clipboard changed.\n");
 		HANDLE hostname = GetClipboardData(watcher->ctype);
 		HANDLE data = GetClipboardData(CF_TEXT);
 		if (data != NULL) {
@@ -460,7 +464,7 @@ static LRESULT CALLBACK clipWatcherWndProc(
 	if (watcher != NULL) {
 	    FileEntry* entry = checkFileChanges(watcher);
 	    if (entry != NULL) {
-		fwprintf(stderr, L"file changed: %s\n", entry->name);
+		fwprintf(logfp, L"file changed: %s\n", entry->name);
 		WCHAR path[MAX_PATH];
 		StringCchPrintf(path, _countof(path), L"%s\\%s.txt", 
 				watcher->watchdir, entry->name);
@@ -570,6 +574,8 @@ int ClipWatcherMain(
     HANDLE notifier = FindFirstChangeNotification(
 	clipdir, FALSE, 
 	(FILE_NOTIFY_CHANGE_FILE_NAME |
+	 FILE_NOTIFY_CHANGE_SIZE |
+	 FILE_NOTIFY_CHANGE_ATTRIBUTES |
 	 FILE_NOTIFY_CHANGE_LAST_WRITE));
     if (notifier == INVALID_HANDLE_VALUE) {
 	WCHAR text[MAX_PATH];
