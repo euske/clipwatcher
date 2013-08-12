@@ -182,12 +182,29 @@ static void openClipText(LPCWSTR name, LPCWSTR text, int nchars)
     }
 }
 
+// getFileSignature(fp)
+static DWORD getFileSignature(HANDLE fp)
+{
+    DWORD sig = 0;
+    for (;;) {
+	DWORD buf[1024];
+	DWORD readbytes;
+	ReadFile(fp, buf, sizeof(buf), &readbytes, NULL);
+	DWORD n = readbytes/sizeof(DWORD);
+	for (int i = 0; i < n; i++) {
+	    sig ^= buf[i];
+	}
+	if (readbytes < sizeof(buf)) break;
+    }
+    return sig;
+}
+
 
 //  FileEntry
 // 
 typedef struct _FileEntry {
     WCHAR name[MAX_PATH];
-    FILETIME mtime;
+    DWORD sig;
     struct _FileEntry* next;
 } FileEntry;
 
@@ -238,32 +255,30 @@ static FileEntry* checkFileChanges(ClipWatcher* watcher)
 	StringCchPrintf(path, _countof(path), L"%s\\%s", 
 			watcher->watchdir, data.cFileName);
 	HANDLE fp = CreateFile(path, GENERIC_READ, FILE_SHARE_READ,
-			       NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 
+			       NULL, OPEN_EXISTING, 
+			       FILE_ATTRIBUTE_NORMAL | FILE_FLAG_NO_BUFFERING,
 			       NULL);
 	if (fp != INVALID_HANDLE_VALUE) {
-	    FILETIME mtime;
-	    if (GetFileTime(fp, NULL, NULL, &mtime)) {
-		LPWSTR name = ristrip(data.cFileName, L".txt");
-		fwprintf(logfp, L"mtime: %s: %08x %08x\n", 
-			 name, mtime.dwLowDateTime, mtime.dwHighDateTime);
-		if (name != NULL) {
-		    FileEntry* entry = findFileEntry(watcher->files, name);
-		    if (entry == NULL) {
-			fwprintf(logfp, L"added: %s\n", name);
+	    DWORD sig = getFileSignature(fp);
+	    LPWSTR name = ristrip(data.cFileName, L".txt");
+	    fwprintf(logfp, L"sig: %s: %08x\n", name, sig);
+	    if (name != NULL) {
+		FileEntry* entry = findFileEntry(watcher->files, name);
+		if (entry == NULL) {
+		    fwprintf(logfp, L"added: %s\n", name);
 			entry = (FileEntry*) malloc(sizeof(FileEntry));
 			StringCchCopy(entry->name, _countof(entry->name), name);
-			entry->mtime = mtime;
+			entry->sig = sig;
 			entry->next = watcher->files;
 			watcher->files = entry;
 			found = entry;
-		    } else if (0 < CompareFileTime(&mtime, &entry->mtime)) {
-			fwprintf(logfp, L"updated: %s\n", name);
-			entry->mtime = mtime;
-			found = entry;
-		    }
+		} else if (sig != entry->sig) {
+		    fwprintf(logfp, L"updated: %s\n", name);
+		    entry->sig = sig;
+		    found = entry;
 		}
-		CloseHandle(fp);
 	    }
+	    CloseHandle(fp);
 	}
 	if (!FindNextFile(fft, &data)) break;
     }
