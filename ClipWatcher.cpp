@@ -183,18 +183,19 @@ static void openClipText(LPCWSTR name, LPCWSTR text, int nchars)
 }
 
 // getFileSignature(fp)
-static DWORD getFileSignature(HANDLE fp)
+static DWORD getFileSignature(HANDLE fp, DWORD n)
 {
     DWORD sig = 0;
-    for (;;) {
-	DWORD buf[1024];
+    DWORD bufsize = sizeof(DWORD)*n;
+    DWORD* buf = (DWORD*) malloc(bufsize);
+    if (buf != NULL) {
 	DWORD readbytes;
-	ReadFile(fp, buf, sizeof(buf), &readbytes, NULL);
-	DWORD n = readbytes/sizeof(DWORD);
+	ZeroMemory(buf, bufsize);
+	ReadFile(fp, buf, bufsize, &readbytes, NULL);
 	for (int i = 0; i < n; i++) {
 	    sig ^= buf[i];
 	}
-	if (readbytes < sizeof(buf)) break;
+	free(buf);
     }
     return sig;
 }
@@ -259,7 +260,7 @@ static FileEntry* checkFileChanges(ClipWatcher* watcher)
 			       FILE_ATTRIBUTE_NORMAL | FILE_FLAG_NO_BUFFERING,
 			       NULL);
 	if (fp != INVALID_HANDLE_VALUE) {
-	    DWORD sig = getFileSignature(fp);
+	    DWORD sig = getFileSignature(fp, 256);
 	    LPWSTR name = ristrip(data.cFileName, L".txt");
 	    fwprintf(logfp, L"sig: %s: %08x\n", name, sig);
 	    if (name != NULL) {
