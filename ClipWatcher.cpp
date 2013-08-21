@@ -19,6 +19,8 @@ const LPCWSTR DIRECTORY_NOTFOUND = L"Directory not found: %s";
 
 const LPCWSTR OP_OPEN = L"open";
 const DWORD MAX_FILE_SIZE = 32767;
+const int CLIPBOARD_RETRY = 3;
+const UINT CLIPBOARD_DELAY = 100;
 const UINT WM_NOTIFY_ICON = WM_USER+1;
 const UINT WM_NOTIFY_FILE = WM_NOTIFY_ICON+1;
 const UINT ICON_ID = 1;
@@ -111,7 +113,7 @@ static HANDLE createGlobalText(LPCWSTR text, int nchars)
 // writeClipText(path, text, nchars)
 static void writeClipText(LPCWSTR path, LPCWSTR text, int nchars)
 {
-    HANDLE fp = CreateFile(path, GENERIC_WRITE, FILE_SHARE_READ,
+    HANDLE fp = CreateFile(path, GENERIC_WRITE, 0,
 			   NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, 
 			   NULL);
     if (fp != INVALID_HANDLE_VALUE) {
@@ -212,11 +214,11 @@ typedef struct _FileEntry {
 //  ClipWatcher
 // 
 typedef struct _ClipWatcher {
-    HWND hwndnext;
     LPWSTR watchdir;
     LPWSTR name;
     UINT ctype;
     FileEntry* files;
+    DWORD seqno;
 } ClipWatcher;
 
 // findFileEntry(files, name)
@@ -301,7 +303,7 @@ ClipWatcher* CreateClipWatcher(LPCWSTR watchdir, LPCWSTR name)
     watcher->files = NULL;
     // Register a clipboard format.
     watcher->ctype = RegisterClipboardFormat(L"ClipWatcherHostname");
-    
+    watcher->seqno = 0;
     return watcher;
 }
 
@@ -368,8 +370,8 @@ static LRESULT CALLBACK clipWatcherWndProc(
 	if (watcher != NULL) {
 	    SetWindowLongPtr(hWnd, GWLP_USERDATA, (LONG_PTR)watcher);
 	    fwprintf(logfp, L"watching: %s\n", watcher->name);
-	    // Insert itself into the clipboard viewer chain.
-	    watcher->hwndnext = SetClipboardViewer(hWnd);
+	    // Start watching the clipboard content.
+            AddClipboardFormatListener(hWnd);
 	    // Register the icon.
 	    NOTIFYICONDATA nidata = {0};
 	    nidata.cbSize = sizeof(nidata);
@@ -390,8 +392,8 @@ static LRESULT CALLBACK clipWatcherWndProc(
 	LONG_PTR lp = GetWindowLongPtr(hWnd, GWLP_USERDATA);
 	ClipWatcher* watcher = (ClipWatcher*)lp;
 	if (watcher != NULL) {
-	    // Remove itself from the clipboard viewer chain.
-	    ChangeClipboardChain(hWnd, watcher->hwndnext);
+	    // Stop watching the clipboard content.
+            RemoveClipboardFormatListener(hWnd);
 	    // Unregister the icon.
 	    NOTIFYICONDATA nidata = {0};
 	    nidata.cbSize = sizeof(nidata);
@@ -403,51 +405,41 @@ static LRESULT CALLBACK clipWatcherWndProc(
 	return FALSE;
     }
 
-    case WM_CHANGECBCHAIN:
+    case WM_CLIPBOARDUPDATE:
     {
 	LONG_PTR lp = GetWindowLongPtr(hWnd, GWLP_USERDATA);
 	ClipWatcher* watcher = (ClipWatcher*)lp;
 	if (watcher != NULL) {
-	    // Update the clipboard viewer chain.
-	    if ((HWND)wParam == watcher->hwndnext) {
-		watcher->hwndnext = (HWND)lParam;
-	    } else if (watcher->hwndnext != NULL) {
-		SendMessage(watcher->hwndnext, uMsg, wParam, lParam);
+            DWORD seqno = GetClipboardSequenceNumber();
+	    if (watcher->seqno < seqno) {
+                watcher->seqno = seqno;
+                fwprintf(logfp, L"clipboard changed: seqno=%d\n", seqno);
+                for (int i = 0; i < CLIPBOARD_RETRY; i++) {
+                    Sleep(CLIPBOARD_DELAY);
+                    if (OpenClipboard(hWnd)) {
+                        HANDLE hostname = GetClipboardData(watcher->ctype);
+                        HANDLE data = GetClipboardData(CF_TEXT);
+                        if (data != NULL && hostname == NULL) {
+                            LPSTR bytes = (LPSTR) GlobalLock(data);
+                            if (bytes != NULL) {
+                                int nchars;
+                                LPWSTR text = getWCHARfromCHAR(bytes, GlobalSize(data), &nchars);
+                                if (text != NULL) {
+                                    WCHAR path[MAX_PATH];
+                                    StringCchPrintf(path, _countof(path), L"%s\\%s.txt", 
+                                                    watcher->watchdir, watcher->name);
+                                    writeClipText(path, text, nchars);
+                                    popupInfo(hWnd, CLIPBOARD_UPDATED, text);
+                                    free(text);
+                                }
+                                GlobalUnlock(data);
+                            }
+                        }
+                        CloseClipboard();
+                        break;
+                    }
+                }
 	    }
-	}
-	return FALSE;
-    }
-
-    case WM_DRAWCLIPBOARD:
-    {
-	LONG_PTR lp = GetWindowLongPtr(hWnd, GWLP_USERDATA);
-	ClipWatcher* watcher = (ClipWatcher*)lp;
-	if (watcher != NULL) {
-	    if (OpenClipboard(hWnd)) {
-		fwprintf(logfp, L"clipboard changed.\n");
-		HANDLE hostname = GetClipboardData(watcher->ctype);
-		HANDLE data = GetClipboardData(CF_TEXT);
-		if (data != NULL) {
-		    LPSTR bytes = (LPSTR) GlobalLock(data);
-		    if (bytes != NULL) {
-			int nchars;
-			LPWSTR text = getWCHARfromCHAR(bytes, GlobalSize(data), &nchars);
-			if (text != NULL) {
-			    if (hostname == NULL) {
-				WCHAR path[MAX_PATH];
-				StringCchPrintf(path, _countof(path), L"%s\\%s.txt", 
-						watcher->watchdir, watcher->name);
-				writeClipText(path, text, nchars);
-			    }
-			    popupInfo(hWnd, CLIPBOARD_UPDATED, text);
-			    free(text);
-			}
-			GlobalUnlock(data);
-		    }
-		}
-		CloseClipboard();
-	    }
-	    SendMessage(watcher->hwndnext, uMsg, wParam, lParam);
 	}
 	return FALSE;
     }
@@ -484,23 +476,27 @@ static LRESULT CALLBACK clipWatcherWndProc(
 		WCHAR path[MAX_PATH];
 		StringCchPrintf(path, _countof(path), L"%s\\%s.txt", 
 				watcher->watchdir, entry->name);
-		int nchars;
-		LPWSTR text = readClipText(path, &nchars);
-		if (text != NULL) {
-		    HANDLE data = createGlobalText(text, nchars);
-		    if (data != NULL) {
-			HANDLE hostname = createGlobalText(entry->name, -1);
-			if (hostname != NULL) {
-			    if (OpenClipboard(hWnd)) {
-				SetClipboardData(watcher->ctype, hostname);
-				SetClipboardData(CF_TEXT, data);
-				CloseClipboard();
-			    }
-			    GlobalFree(hostname);
-			}
-			GlobalFree(data);
-		    }
-		    free(text);
+                for (int i = 0; i < CLIPBOARD_RETRY; i++) {
+                    Sleep(CLIPBOARD_DELAY);
+                    if (OpenClipboard(hWnd)) {
+                        int nchars;
+                        LPWSTR text = readClipText(path, &nchars);
+                        if (text != NULL) {
+                            HANDLE data = createGlobalText(text, nchars);
+                            if (data != NULL) {
+                                HANDLE hostname = createGlobalText(entry->name, -1);
+                                if (hostname != NULL) {
+                                    SetClipboardData(watcher->ctype, hostname);
+                                    SetClipboardData(CF_TEXT, data);
+                                    GlobalFree(hostname);
+                                }
+                                GlobalFree(data);
+                            }
+                            free(text);
+                        }
+                        CloseClipboard();
+                        break;
+                    }
 		}
 	    }
 	}
