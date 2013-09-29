@@ -6,6 +6,7 @@
 #include <Windows.h>
 #include <StrSafe.h>
 #include <Shlobj.h>
+#include <dbt.h>
 #include "Resource.h"
 
 #pragma comment(lib, "user32.lib")
@@ -215,6 +216,7 @@ typedef struct _FileEntry {
 // 
 typedef struct _ClipWatcher {
     LPWSTR watchdir;
+    HANDLE notifier;
     LPWSTR name;
     UINT ctype;
     FileEntry* files;
@@ -299,18 +301,41 @@ ClipWatcher* CreateClipWatcher(LPCWSTR watchdir, LPCWSTR name)
     if (watcher == NULL) return NULL;
 
     watcher->watchdir = wcsdup(watchdir);
+    watcher->notifier = INVALID_HANDLE_VALUE;
     watcher->name = wcsdup(name);
     watcher->files = NULL;
     // Register a clipboard format.
     watcher->ctype = RegisterClipboardFormat(L"ClipWatcherHostname");
     watcher->seqno = 0;
+
     return watcher;
+}
+
+//  UpdateClipWatcher
+// 
+void UpdateClipWatcher(ClipWatcher* watcher)
+{
+    if (watcher->notifier != INVALID_HANDLE_VALUE) {
+        FindCloseChangeNotification(watcher->notifier);
+    }
+    // Register a file watcher.
+    watcher->notifier = FindFirstChangeNotification(
+	watcher->watchdir, FALSE, 
+	(FILE_NOTIFY_CHANGE_FILE_NAME |
+	 FILE_NOTIFY_CHANGE_SIZE |
+	 FILE_NOTIFY_CHANGE_ATTRIBUTES |
+	 FILE_NOTIFY_CHANGE_LAST_WRITE));
+    fwprintf(logfp, L"register: watchdir=%s, notifier=%p\n", 
+             watcher->watchdir, watcher->notifier);
 }
 
 //  DestroyClipWatcher
 // 
 void DestroyClipWatcher(ClipWatcher* watcher)
 {
+    if (watcher->notifier != INVALID_HANDLE_VALUE) {
+        FindCloseChangeNotification(watcher->notifier);
+    }
     if (watcher->watchdir != NULL) {
 	free(watcher->watchdir);
     }
@@ -362,9 +387,12 @@ static LRESULT CALLBACK clipWatcherWndProc(
     WPARAM wParam,
     LPARAM lParam)
 {
+    //fwprintf(stderr, L"msg: %x, hWnd=%p, wParam=%p\n", uMsg, hWnd, wParam);
+
     switch (uMsg) {
     case WM_CREATE:
     {
+        // Initialization.
 	CREATESTRUCT* cs = (CREATESTRUCT*)lParam;
 	ClipWatcher* watcher = (ClipWatcher*)(cs->lpCreateParams);
 	if (watcher != NULL) {
@@ -389,6 +417,7 @@ static LRESULT CALLBACK clipWatcherWndProc(
     
     case WM_DESTROY:
     {
+        // Clean up.
 	LONG_PTR lp = GetWindowLongPtr(hWnd, GWLP_USERDATA);
 	ClipWatcher* watcher = (ClipWatcher*)lp;
 	if (watcher != NULL) {
@@ -407,6 +436,7 @@ static LRESULT CALLBACK clipWatcherWndProc(
 
     case WM_CLIPBOARDUPDATE:
     {
+        // Clipboard change detected.
 	LONG_PTR lp = GetWindowLongPtr(hWnd, GWLP_USERDATA);
 	ClipWatcher* watcher = (ClipWatcher*)lp;
 	if (watcher != NULL) {
@@ -447,29 +477,9 @@ static LRESULT CALLBACK clipWatcherWndProc(
 	return FALSE;
     }
 
-    case WM_NOTIFY_ICON:
-    {
-	POINT pt;
-	switch (lParam) {
-	case WM_LBUTTONDBLCLK:
-	    SendMessage(hWnd, WM_COMMAND, 
-			MAKEWPARAM(IDM_OPEN, 1), NULL);
-	    break;
-	case WM_LBUTTONUP:
-	    break;
-	case WM_RBUTTONUP:
-	    if (GetCursorPos(&pt)) {
-		SetForegroundWindow(hWnd);
-		displayContextMenu(hWnd, pt);
-		PostMessage(hWnd, WM_NULL, 0, 0);
-	    }
-	    break;
-	}
-	return FALSE;
-    }
-
     case WM_NOTIFY_FILE:
     {
+        // File change detected.
 	LONG_PTR lp = GetWindowLongPtr(hWnd, GWLP_USERDATA);
 	ClipWatcher* watcher = (ClipWatcher*)lp;
 	if (watcher != NULL) {
@@ -508,6 +518,7 @@ static LRESULT CALLBACK clipWatcherWndProc(
 
     case WM_COMMAND:
     {
+        // Command specified.
 	LONG_PTR lp = GetWindowLongPtr(hWnd, GWLP_USERDATA);
 	ClipWatcher* watcher = (ClipWatcher*)lp;
 	switch (LOWORD(wParam)) {
@@ -533,6 +544,42 @@ static LRESULT CALLBACK clipWatcherWndProc(
 	    break;
 	case IDM_EXIT:
 	    SendMessage(hWnd, WM_CLOSE, 0, 0);
+	    break;
+	}
+	return FALSE;
+    }
+
+    case WM_DEVICECHANGE:
+    {
+        // Filesytem/Network share change detected.
+        // NOTICE: We wanted to check if wParam is DBT_DEVICEARRIVAL.
+        //   But it doesn't work when the system is suspended.
+	LONG_PTR lp = GetWindowLongPtr(hWnd, GWLP_USERDATA);
+	ClipWatcher* watcher = (ClipWatcher*)lp;
+	if (watcher != NULL) {
+            // Re-initialize the watcher object.
+            UpdateClipWatcher(watcher);
+        }
+        return TRUE;
+    }
+
+    case WM_NOTIFY_ICON:
+    {
+        // UI event handling.
+	POINT pt;
+	switch (lParam) {
+	case WM_LBUTTONDBLCLK:
+	    SendMessage(hWnd, WM_COMMAND, 
+			MAKEWPARAM(IDM_OPEN, 1), NULL);
+	    break;
+	case WM_LBUTTONUP:
+	    break;
+	case WM_RBUTTONUP:
+	    if (GetCursorPos(&pt)) {
+		SetForegroundWindow(hWnd);
+		displayContextMenu(hWnd, pt);
+		PostMessage(hWnd, WM_NULL, 0, 0);
+	    }
 	    break;
 	}
 	return FALSE;
@@ -585,20 +632,6 @@ int ClipWatcherMain(
     DWORD namelen = sizeof(name);
     GetComputerName(name, &namelen);
 
-    // Register a file watcher.
-    HANDLE notifier = FindFirstChangeNotification(
-	clipdir, FALSE, 
-	(FILE_NOTIFY_CHANGE_FILE_NAME |
-	 FILE_NOTIFY_CHANGE_SIZE |
-	 FILE_NOTIFY_CHANGE_ATTRIBUTES |
-	 FILE_NOTIFY_CHANGE_LAST_WRITE));
-    if (notifier == INVALID_HANDLE_VALUE) {
-	WCHAR text[MAX_PATH];
-	StringCchPrintf(text, _countof(text), DIRECTORY_NOTFOUND, clipdir);
-	MessageBox(NULL, text, L"Error", MB_OK);
-	return 0;
-    }
-
     // Register the window class.
     ATOM atom;
     {
@@ -614,6 +647,7 @@ int ClipWatcherMain(
     
     // Create a ClipWatcher object.
     ClipWatcher* watcher = CreateClipWatcher(clipdir, name);
+    UpdateClipWatcher(watcher);
     checkFileChanges(watcher);
     
     // Create a SysTray window.
@@ -630,36 +664,34 @@ int ClipWatcherMain(
     MSG msg;
     BOOL loop = TRUE;
     while (loop) {
-	DWORD obj = MsgWaitForMultipleObjects(1, &notifier,
-					      FALSE, INFINITE, QS_ALLINPUT);
-	switch (obj) {
-	case WAIT_OBJECT_0:
-	    // We got a notification;
-	    FindNextChangeNotification(notifier);
-	    PostMessage(hWnd, WM_NOTIFY_FILE, 0, 0);
-	    break;
-	case WAIT_OBJECT_0+1:
-	    // We got a Window Message.
-	    while (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) {
-		if (msg.message == WM_QUIT) {
-		    loop = FALSE;
-		    break;
-		}
-		TranslateMessage(&msg);
-		DispatchMessage(&msg);
-	    }
-	    break;
-	default:
+        int n = (watcher->notifier != INVALID_HANDLE_VALUE)? 1 : 0;
+	DWORD obj = MsgWaitForMultipleObjects(n, &(watcher->notifier),
+                                              FALSE, INFINITE, QS_ALLINPUT);
+        if (obj < WAIT_OBJECT_0) {
 	    // Unexpected failure!
 	    loop = FALSE;
 	    break;
+        }
+        int i = obj - WAIT_OBJECT_0;
+        if (i < n) {
+            // We got a notification;
+            FindNextChangeNotification(watcher->notifier);
+            PostMessage(hWnd, WM_NOTIFY_FILE, 0, 0);
+        } else {
+            // We got a Window Message.
+            while (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) {
+                if (msg.message == WM_QUIT) {
+                    loop = FALSE;
+                    break;
+                }
+                TranslateMessage(&msg);
+                DispatchMessage(&msg);
+            }
 	}
     }
 
     // Clean up.
     DestroyClipWatcher(watcher);
-    // Unregister the file watcher;
-    FindCloseChangeNotification(notifier);
 
     return (int)msg.wParam;
 }
