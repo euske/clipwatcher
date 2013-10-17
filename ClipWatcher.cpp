@@ -549,7 +549,7 @@ static LRESULT CALLBACK clipWatcherWndProc(
 	return FALSE;
     }
 
-    case WM_DEVICECHANGE:
+    case WM_TIMECHANGE:
     {
         // Filesytem/Network share change detected.
         // NOTICE: We wanted to check if wParam is DBT_DEVICEARRIVAL.
