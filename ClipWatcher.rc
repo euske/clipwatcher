@@ -31,4 +31,5 @@ BEGIN
 END
 
 IDI_CLIPWATCHER ICON "ClipWatcher.ico"
-
+IDI_CLIPEMPTY ICON "ClipEmpty.ico"
+IDI_CLIPFULL ICON "ClipFull.ico"

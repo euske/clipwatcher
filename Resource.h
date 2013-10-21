@@ -1,2 +1,4 @@
 #define IDI_CLIPWATCHER 100
+#define IDI_CLIPEMPTY 101
+#define IDI_CLIPFULL 102
 

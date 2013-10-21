@@ -24,7 +24,6 @@ const int CLIPBOARD_RETRY = 3;
 const UINT CLIPBOARD_DELAY = 100;
 const UINT WM_NOTIFY_ICON = WM_USER+1;
 const UINT WM_NOTIFY_FILE = WM_NOTIFY_ICON+1;
-const UINT ICON_ID = 1;
 
 static FILE* logfp = stderr;
 
@@ -218,9 +217,14 @@ typedef struct _ClipWatcher {
     LPWSTR watchdir;
     HANDLE notifier;
     LPWSTR name;
-    UINT ctype;
     FileEntry* files;
+    UINT ctype;
     DWORD seqno;
+
+    HICON icons[2];
+    UINT icon_id;
+    UINT_PTR timer_id;
+    int blink_count;
 } ClipWatcher;
 
 // findFileEntry(files, name)
@@ -295,7 +299,7 @@ fail:
 
 //  CreateClipWatcher
 // 
-ClipWatcher* CreateClipWatcher(LPCWSTR watchdir, LPCWSTR name)
+ClipWatcher* CreateClipWatcher(HINSTANCE hInstance, LPCWSTR watchdir, LPCWSTR name)
 {
     ClipWatcher* watcher = (ClipWatcher*) malloc(sizeof(ClipWatcher));
     if (watcher == NULL) return NULL;
@@ -308,6 +312,11 @@ ClipWatcher* CreateClipWatcher(LPCWSTR watchdir, LPCWSTR name)
     watcher->ctype = RegisterClipboardFormat(L"ClipWatcherHostname");
     watcher->seqno = 0;
 
+    watcher->icons[0] = LoadIcon(hInstance, MAKEINTRESOURCE(IDI_CLIPEMPTY));
+    watcher->icons[1] = LoadIcon(hInstance, MAKEINTRESOURCE(IDI_CLIPFULL));
+    watcher->icon_id = 1;
+    watcher->timer_id = 1;
+    watcher->blink_count = 0;
     return watcher;
 }
 
@@ -349,17 +358,29 @@ void DestroyClipWatcher(ClipWatcher* watcher)
 }
 
 // popupInfo
-static void popupInfo(HWND hWnd, LPCWSTR title, LPCWSTR text)
+static void popupInfo(HWND hWnd, UINT icon_id, LPCWSTR title, LPCWSTR text)
 {
     NOTIFYICONDATA nidata = {0};
     nidata.cbSize = sizeof(nidata);
     nidata.hWnd = hWnd;
-    nidata.uID = ICON_ID;
+    nidata.uID = icon_id;
     nidata.uFlags = NIF_INFO;
     nidata.dwInfoFlags = NIIF_INFO;
     nidata.uTimeout = 1;
     StringCchCopy(nidata.szInfoTitle, _countof(nidata.szInfoTitle), title);
     StringCchCopy(nidata.szInfo, _countof(nidata.szInfo), text);
+    Shell_NotifyIcon(NIM_MODIFY, &nidata);
+}
+
+// showIcon
+static void showIcon(HWND hWnd, UINT icon_id, HICON hIcon)
+{
+    NOTIFYICONDATA nidata = {0};
+    nidata.cbSize = sizeof(nidata);
+    nidata.hWnd = hWnd;
+    nidata.uID = icon_id;
+    nidata.uFlags = NIF_ICON;
+    nidata.hIcon = hIcon;
     Shell_NotifyIcon(NIM_MODIFY, &nidata);
 }
 
@@ -404,13 +425,14 @@ static LRESULT CALLBACK clipWatcherWndProc(
 	    NOTIFYICONDATA nidata = {0};
 	    nidata.cbSize = sizeof(nidata);
 	    nidata.hWnd = hWnd;
-	    nidata.uID = ICON_ID;
+	    nidata.uID = watcher->icon_id;
 	    nidata.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
 	    nidata.uCallbackMessage = WM_NOTIFY_ICON;
-	    nidata.hIcon = (HICON) GetClassLongPtr(hWnd, GCLP_HICON);
+	    nidata.hIcon = watcher->icons[0];
 	    StringCchPrintf(nidata.szTip, _countof(nidata.szTip),
 			    WATCHING_DIR, watcher->watchdir);
 	    Shell_NotifyIcon(NIM_ADD, &nidata);
+            SetTimer(hWnd, watcher->timer_id, 200, NULL);
 	}
 	return FALSE;
     }
@@ -421,13 +443,14 @@ static LRESULT CALLBACK clipWatcherWndProc(
 	LONG_PTR lp = GetWindowLongPtr(hWnd, GWLP_USERDATA);
 	ClipWatcher* watcher = (ClipWatcher*)lp;
 	if (watcher != NULL) {
+            KillTimer(hWnd, watcher->timer_id);
 	    // Stop watching the clipboard content.
             RemoveClipboardFormatListener(hWnd);
 	    // Unregister the icon.
 	    NOTIFYICONDATA nidata = {0};
 	    nidata.cbSize = sizeof(nidata);
 	    nidata.hWnd = hWnd;
-	    nidata.uID = ICON_ID;
+	    nidata.uID = watcher->icon_id;
 	    Shell_NotifyIcon(NIM_DELETE, &nidata);
 	}
 	PostQuitMessage(0);
@@ -461,7 +484,9 @@ static LRESULT CALLBACK clipWatcherWndProc(
                                                         watcher->watchdir, watcher->name);
                                         writeClipText(path, text, nchars);
                                     } else {
-                                        popupInfo(hWnd, CLIPBOARD_UPDATED, text);
+                                        popupInfo(hWnd, watcher->icon_id,
+                                                  CLIPBOARD_UPDATED, text);
+                                        watcher->blink_count = 10;
                                     }
                                     free(text);
                                 }
@@ -585,6 +610,21 @@ static LRESULT CALLBACK clipWatcherWndProc(
 	return FALSE;
     }
 
+    case WM_TIMER:
+    {
+	LONG_PTR lp = GetWindowLongPtr(hWnd, GWLP_USERDATA);
+	ClipWatcher* watcher = (ClipWatcher*)lp;
+	if (watcher != NULL) {
+            // Blink the icon.
+            if (watcher->blink_count) {
+                watcher->blink_count--;
+                showIcon(hWnd, watcher->icon_id,
+                         watcher->icons[(watcher->blink_count % 2)]);
+            }
+        }
+        return FALSE;
+    }
+
     case WM_CLOSE:
 	DestroyWindow(hWnd);
 	return FALSE;
@@ -646,7 +686,7 @@ int ClipWatcherMain(
     }
     
     // Create a ClipWatcher object.
-    ClipWatcher* watcher = CreateClipWatcher(clipdir, name);
+    ClipWatcher* watcher = CreateClipWatcher(hInstance, clipdir, name);
     UpdateClipWatcher(watcher);
     checkFileChanges(watcher);
     
