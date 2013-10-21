@@ -24,6 +24,7 @@ const int CLIPBOARD_RETRY = 3;
 const UINT CLIPBOARD_DELAY = 100;
 const UINT WM_NOTIFY_ICON = WM_USER+1;
 const UINT WM_NOTIFY_FILE = WM_NOTIFY_ICON+1;
+const UINT TIMER_INTERVAL = 400;
 
 static FILE* logfp = stderr;
 
@@ -432,7 +433,7 @@ static LRESULT CALLBACK clipWatcherWndProc(
 	    StringCchPrintf(nidata.szTip, _countof(nidata.szTip),
 			    WATCHING_DIR, watcher->watchdir);
 	    Shell_NotifyIcon(NIM_ADD, &nidata);
-            SetTimer(hWnd, watcher->timer_id, 200, NULL);
+            SetTimer(hWnd, watcher->timer_id, TIMER_INTERVAL, NULL);
 	}
 	return FALSE;
     }
