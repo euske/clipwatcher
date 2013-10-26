@@ -2,12 +2,12 @@ ClipWatcher
 ===========
 
 ClipWatcher (Clipboard Watcher) watches the clipboard content and 
-synchronizes it with files in a given directory (default: $HOME/Clipboard). 
+synchronizes it with files in a given directory (default: `%UserProfile%/Clipboard`). 
 By sharing this folder with other computers, it allows sharing a clipboard 
 content among multiple machines.
 
 The exchange is bidirectional. When you copy a text, the content is saved
-to $HOME/Clipboard/$HOSTNAME.txt (e.g. C:\Users\euske\Clipboard\EUSKE-HP.txt).
+as %ComputerName%.txt (e.g. `C:\Users\euske\Clipboard\EUSKE-HP.txt`).
 When a file is created or modified within the directory, the content is
 automatically copied to the clipboard.
 
