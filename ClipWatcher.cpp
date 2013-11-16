@@ -34,6 +34,22 @@ typedef enum _MenuItemID {
     IDM_OPEN,
 };
 
+static size_t getBfOffBits(BITMAPINFO* bmp)
+{
+    int ncolors = bmp->bmiHeader.biClrUsed;
+    if (ncolors == 0) {
+        switch (bmp->bmiHeader.biBitCount) {
+        case 1:
+            ncolors = 2;
+            break;
+        case 8:
+            ncolors = 256;
+            break;
+        }
+    }
+    return (bmp->bmiHeader.biSize + ncolors*sizeof(RGBQUAD));
+}
+
 static LPWSTR getWCHARfromCHAR(LPCSTR bytes, int nbytes, int* pnchars)
 {
     int nchars = MultiByteToWideChar(CP_ACP, 0, bytes, nbytes, NULL, 0);
@@ -111,22 +127,47 @@ static HANDLE createGlobalText(LPCWSTR text, int nchars)
     return data;
 }
 
-// writeClipText(path, text, nchars)
-static void writeClipText(LPCWSTR path, LPCWSTR text, int nchars)
+// writeClipBytes(path, bytes, nbytes)
+static void writeClipBytes(LPCWSTR path, LPVOID bytes, int nbytes)
 {
     HANDLE fp = CreateFile(path, GENERIC_WRITE, 0,
 			   NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, 
 			   NULL);
     if (fp != INVALID_HANDLE_VALUE) {
-	int nbytes;
-	LPSTR bytes = getCHARfromWCHAR(text, nchars, &nbytes);
-	nbytes--;
-	fwprintf(logfp, L"write file: path=%s, nbytes=%d\n", path, nbytes);
-	if (bytes != NULL) {
-	    DWORD writtenbytes;
-	    WriteFile(fp, bytes, nbytes, &writtenbytes, NULL);
-	    free(bytes);
-	}
+	fwprintf(logfp, L"write file: path=%s, nbytes=%u\n", path, nbytes);
+        DWORD writtenbytes;
+        WriteFile(fp, bytes, nbytes, &writtenbytes, NULL);
+	CloseHandle(fp);
+    }
+}
+
+// writeClipText(path, text, nchars)
+static void writeClipText(LPCWSTR path, LPCWSTR text, int nchars)
+{
+    int nbytes;
+    LPSTR bytes = getCHARfromWCHAR(text, nchars, &nbytes);
+    nbytes--;
+    if (bytes != NULL) {
+        writeClipBytes(path, bytes, nbytes);
+        free(bytes);
+    }
+}
+
+// writeClipDIB(path, bytes, nbytes)
+static void writeClipDIB(LPCWSTR path, LPVOID bytes, SIZE_T nbytes)
+{
+    BITMAPFILEHEADER filehdr = {0};
+    filehdr.bfType = 0x4d42;    // 'BM' in little endian.
+    filehdr.bfSize = sizeof(filehdr)+nbytes;
+    filehdr.bfOffBits = sizeof(filehdr)+getBfOffBits((BITMAPINFO*)bytes);
+    HANDLE fp = CreateFile(path, GENERIC_WRITE, 0,
+			   NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, 
+			   NULL);
+    if (fp != INVALID_HANDLE_VALUE) {
+	fwprintf(logfp, L"write file: path=%s, nbytes=%u\n", path, filehdr.bfSize);
+        DWORD writtenbytes;
+        WriteFile(fp, &filehdr, sizeof(filehdr), &writtenbytes, NULL);
+        WriteFile(fp, bytes, nbytes, &writtenbytes, NULL);
 	CloseHandle(fp);
     }
 }
@@ -500,6 +541,19 @@ static LRESULT CALLBACK clipWatcherWndProc(
                                     free(text);
                                 }
                                 GlobalUnlock(data);
+                            }
+                        }
+                        // CF_DIB
+                        data = GetClipboardData(CF_DIB);
+                        if (data != NULL) {
+                            LPVOID bytes = GlobalLock(data);
+                            if (bytes != NULL) {
+                                SIZE_T nbytes = GlobalSize(data);
+                                WCHAR path[MAX_PATH];
+                                StringCchPrintf(path, _countof(path), L"%s\\%s.bmp", 
+                                                watcher->dstdir, watcher->name);
+                                writeClipDIB(path, bytes, nbytes);
+                                GlobalUnlock(bytes);
                             }
                         }
                         CloseClipboard();
