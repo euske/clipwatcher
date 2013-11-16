@@ -215,7 +215,8 @@ typedef struct _FileEntry {
 //  ClipWatcher
 // 
 typedef struct _ClipWatcher {
-    LPWSTR watchdir;
+    LPWSTR dstdir;
+    LPWSTR srcdir;
     HANDLE notifier;
     LPWSTR name;
     FileEntry* files;
@@ -252,7 +253,7 @@ static void freeFileEntries(FileEntry* entry)
 static FileEntry* checkFileChanges(ClipWatcher* watcher)
 {
     WCHAR dirpath[MAX_PATH];
-    StringCchPrintf(dirpath, _countof(dirpath), L"%s\\*.txt", watcher->watchdir);
+    StringCchPrintf(dirpath, _countof(dirpath), L"%s\\*.txt", watcher->srcdir);
 
     WIN32_FIND_DATA data;
     FileEntry* found = NULL;
@@ -263,7 +264,7 @@ static FileEntry* checkFileChanges(ClipWatcher* watcher)
     for (;;) {
 	WCHAR path[MAX_PATH];
 	StringCchPrintf(path, _countof(path), L"%s\\%s", 
-			watcher->watchdir, data.cFileName);
+			watcher->srcdir, data.cFileName);
 	HANDLE fp = CreateFile(path, GENERIC_READ, FILE_SHARE_READ,
 			       NULL, OPEN_EXISTING, 
 			       FILE_ATTRIBUTE_NORMAL | FILE_FLAG_NO_BUFFERING,
@@ -300,12 +301,15 @@ fail:
 
 //  CreateClipWatcher
 // 
-ClipWatcher* CreateClipWatcher(HINSTANCE hInstance, LPCWSTR watchdir, LPCWSTR name)
+ClipWatcher* CreateClipWatcher(
+    HINSTANCE hInstance, 
+    LPCWSTR dstdir, LPCWSTR srcdir, LPCWSTR name)
 {
     ClipWatcher* watcher = (ClipWatcher*) malloc(sizeof(ClipWatcher));
     if (watcher == NULL) return NULL;
 
-    watcher->watchdir = wcsdup(watchdir);
+    watcher->dstdir = wcsdup(dstdir);
+    watcher->srcdir = wcsdup(srcdir);
     watcher->notifier = INVALID_HANDLE_VALUE;
     watcher->name = wcsdup(name);
     watcher->files = NULL;
@@ -330,13 +334,13 @@ void UpdateClipWatcher(ClipWatcher* watcher)
     }
     // Register a file watcher.
     watcher->notifier = FindFirstChangeNotification(
-	watcher->watchdir, FALSE, 
+	watcher->srcdir, FALSE, 
 	(FILE_NOTIFY_CHANGE_FILE_NAME |
 	 FILE_NOTIFY_CHANGE_SIZE |
 	 FILE_NOTIFY_CHANGE_ATTRIBUTES |
 	 FILE_NOTIFY_CHANGE_LAST_WRITE));
-    fwprintf(logfp, L"register: watchdir=%s, notifier=%p\n", 
-             watcher->watchdir, watcher->notifier);
+    fwprintf(logfp, L"register: srcdir=%s, notifier=%p\n", 
+             watcher->srcdir, watcher->notifier);
 }
 
 //  DestroyClipWatcher
@@ -346,8 +350,11 @@ void DestroyClipWatcher(ClipWatcher* watcher)
     if (watcher->notifier != INVALID_HANDLE_VALUE) {
         FindCloseChangeNotification(watcher->notifier);
     }
-    if (watcher->watchdir != NULL) {
-	free(watcher->watchdir);
+    if (watcher->srcdir != NULL) {
+	free(watcher->srcdir);
+    }
+    if (watcher->dstdir != NULL) {
+	free(watcher->dstdir);
     }
     if (watcher->name != NULL) {
 	free(watcher->name);
@@ -431,7 +438,7 @@ static LRESULT CALLBACK clipWatcherWndProc(
 	    nidata.uCallbackMessage = WM_NOTIFY_ICON;
 	    nidata.hIcon = watcher->icons[0];
 	    StringCchPrintf(nidata.szTip, _countof(nidata.szTip),
-			    WATCHING_DIR, watcher->watchdir);
+			    WATCHING_DIR, watcher->srcdir);
 	    Shell_NotifyIcon(NIM_ADD, &nidata);
             SetTimer(hWnd, watcher->timer_id, TIMER_INTERVAL, NULL);
 	}
@@ -472,6 +479,7 @@ static LRESULT CALLBACK clipWatcherWndProc(
                     Sleep(CLIPBOARD_DELAY);
                     if (OpenClipboard(hWnd)) {
                         HANDLE hostname = GetClipboardData(watcher->ctype);
+                        // CF_TEXT
                         HANDLE data = GetClipboardData(CF_TEXT);
                         if (data != NULL) {
                             LPSTR bytes = (LPSTR) GlobalLock(data);
@@ -482,7 +490,7 @@ static LRESULT CALLBACK clipWatcherWndProc(
                                     if (hostname == NULL) {
                                         WCHAR path[MAX_PATH];
                                         StringCchPrintf(path, _countof(path), L"%s\\%s.txt", 
-                                                        watcher->watchdir, watcher->name);
+                                                        watcher->dstdir, watcher->name);
                                         writeClipText(path, text, nchars);
                                     } else {
                                         popupInfo(hWnd, watcher->icon_id,
@@ -514,7 +522,7 @@ static LRESULT CALLBACK clipWatcherWndProc(
 		fwprintf(logfp, L"file changed: %s\n", entry->name);
 		WCHAR path[MAX_PATH];
 		StringCchPrintf(path, _countof(path), L"%s\\%s.txt", 
-				watcher->watchdir, entry->name);
+				watcher->srcdir, entry->name);
                 int nchars;
                 LPWSTR text = readClipText(path, &nchars);
                 if (text != NULL) {
@@ -687,7 +695,7 @@ int ClipWatcherMain(
     }
     
     // Create a ClipWatcher object.
-    ClipWatcher* watcher = CreateClipWatcher(hInstance, clipdir, name);
+    ClipWatcher* watcher = CreateClipWatcher(hInstance, clipdir, clipdir, name);
     UpdateClipWatcher(watcher);
     checkFileChanges(watcher);
     
