@@ -261,7 +261,6 @@ typedef struct _ClipWatcher {
     HANDLE notifier;
     LPWSTR name;
     FileEntry* files;
-    UINT ctype;
     DWORD seqno;
 
     HICON icons[2];
@@ -354,8 +353,6 @@ ClipWatcher* CreateClipWatcher(
     watcher->notifier = INVALID_HANDLE_VALUE;
     watcher->name = wcsdup(name);
     watcher->files = NULL;
-    // Register a clipboard format.
-    watcher->ctype = RegisterClipboardFormat(L"ClipWatcherHostname");
     watcher->seqno = 0;
 
     watcher->icons[0] = LoadIcon(hInstance, MAKEINTRESOURCE(IDI_CLIPEMPTY));
@@ -519,7 +516,6 @@ static LRESULT CALLBACK clipWatcherWndProc(
                 for (int i = 0; i < CLIPBOARD_RETRY; i++) {
                     Sleep(CLIPBOARD_DELAY);
                     if (OpenClipboard(hWnd)) {
-                        HANDLE hostname = GetClipboardData(watcher->ctype);
                         // CF_TEXT
                         HANDLE data = GetClipboardData(CF_TEXT);
                         if (data != NULL) {
@@ -528,16 +524,13 @@ static LRESULT CALLBACK clipWatcherWndProc(
                                 int nchars;
                                 LPWSTR text = getWCHARfromCHAR(bytes, GlobalSize(data), &nchars);
                                 if (text != NULL) {
-                                    if (hostname == NULL) {
-                                        WCHAR path[MAX_PATH];
-                                        StringCchPrintf(path, _countof(path), L"%s\\%s.txt", 
-                                                        watcher->dstdir, watcher->name);
-                                        writeClipText(path, text, nchars);
-                                    } else {
-                                        popupInfo(hWnd, watcher->icon_id,
-                                                  CLIPBOARD_UPDATED, text);
-                                        watcher->blink_count = 10;
-                                    }
+                                    WCHAR path[MAX_PATH];
+                                    StringCchPrintf(path, _countof(path), L"%s\\%s.txt", 
+                                                    watcher->dstdir, watcher->name);
+                                    writeClipText(path, text, nchars);
+                                    popupInfo(hWnd, watcher->icon_id,
+                                              CLIPBOARD_UPDATED, text);
+                                    watcher->blink_count = 10;
                                     free(text);
                                 }
                                 GlobalUnlock(data);
@@ -574,30 +567,27 @@ static LRESULT CALLBACK clipWatcherWndProc(
 	    FileEntry* entry = checkFileChanges(watcher);
 	    if (entry != NULL) {
 		fwprintf(logfp, L"file changed: %s\n", entry->name);
-		WCHAR path[MAX_PATH];
-		StringCchPrintf(path, _countof(path), L"%s\\%s.txt", 
-				watcher->srcdir, entry->name);
-                int nchars;
-                LPWSTR text = readClipText(path, &nchars);
-                if (text != NULL) {
-                    HANDLE data = createGlobalText(text, nchars);
-                    if (data != NULL) {
-                        HANDLE hostname = createGlobalText(entry->name, -1);
-                        if (hostname != NULL) {
+                if (wcscmp(entry->name, watcher->name) != 0) {
+                    WCHAR path[MAX_PATH];
+                    StringCchPrintf(path, _countof(path), L"%s\\%s.txt", 
+                                    watcher->srcdir, entry->name);
+                    int nchars;
+                    LPWSTR text = readClipText(path, &nchars);
+                    if (text != NULL) {
+                        HANDLE data = createGlobalText(text, nchars);
+                        if (data != NULL) {
                             for (int i = 0; i < CLIPBOARD_RETRY; i++) {
                                 Sleep(CLIPBOARD_DELAY);
                                 if (OpenClipboard(hWnd)) {
-                                    SetClipboardData(watcher->ctype, hostname);
                                     SetClipboardData(CF_TEXT, data);
                                     CloseClipboard();
                                     break;
                                 }
                             }
-                            GlobalFree(hostname);
+                            GlobalFree(data);
                         }
-                        GlobalFree(data);
+                        free(text);
                     }
-                    free(text);
 		}
 	    }
 	}
