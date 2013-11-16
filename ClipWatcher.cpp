@@ -97,6 +97,17 @@ static LPWSTR ristrip(LPCWSTR text1, LPCWSTR text2)
     return dst;
 }
 
+// rindex(filename)
+static int rindex(LPCWSTR text, WCHAR c)
+{
+    int i = wcslen(text)-1;
+    while (0 <= i) {
+        if (text[i] == c) return i;
+        i--;
+    }
+    return -1;
+}
+
 // istartswith(text1, text2)
 static int istartswith(LPCWSTR text1, LPCWSTR text2)
 {
@@ -293,7 +304,7 @@ static void freeFileEntries(FileEntry* entry)
 static FileEntry* checkFileChanges(ClipWatcher* watcher)
 {
     WCHAR dirpath[MAX_PATH];
-    StringCchPrintf(dirpath, _countof(dirpath), L"%s\\*.txt", watcher->srcdir);
+    StringCchPrintf(dirpath, _countof(dirpath), L"%s\\*.*", watcher->srcdir);
 
     WIN32_FIND_DATA data;
     FileEntry* found = NULL;
@@ -302,35 +313,36 @@ static FileEntry* checkFileChanges(ClipWatcher* watcher)
     if (fft == NULL) goto fail;
     
     for (;;) {
-	WCHAR path[MAX_PATH];
-	StringCchPrintf(path, _countof(path), L"%s\\%s", 
-			watcher->srcdir, data.cFileName);
-	HANDLE fp = CreateFile(path, GENERIC_READ, FILE_SHARE_READ,
-			       NULL, OPEN_EXISTING, 
-			       FILE_ATTRIBUTE_NORMAL | FILE_FLAG_NO_BUFFERING,
-			       NULL);
-	if (fp != INVALID_HANDLE_VALUE) {
-	    DWORD sig = getFileSignature(fp, 256);
-	    LPWSTR name = ristrip(data.cFileName, L".txt");
-	    fwprintf(logfp, L"sig: %s: %08x\n", name, sig);
-	    if (name != NULL) {
-		FileEntry* entry = findFileEntry(watcher->files, name);
-		if (entry == NULL) {
-		    fwprintf(logfp, L"added: %s\n", name);
-			entry = (FileEntry*) malloc(sizeof(FileEntry));
-			StringCchCopy(entry->name, _countof(entry->name), name);
-			entry->sig = sig;
-			entry->next = watcher->files;
-			watcher->files = entry;
-			found = entry;
-		} else if (sig != entry->sig) {
-		    fwprintf(logfp, L"updated: %s\n", name);
-		    entry->sig = sig;
-		    found = entry;
-		}
-	    }
-	    CloseHandle(fp);
-	}
+        LPWSTR name = data.cFileName;
+        int index = rindex(name, L'.');
+        if (0 <= index && wcsncmp(name, watcher->name, index) != 0) {
+            WCHAR path[MAX_PATH];
+            StringCchPrintf(path, _countof(path), L"%s\\%s", 
+                            watcher->srcdir, name);
+            HANDLE fp = CreateFile(path, GENERIC_READ, FILE_SHARE_READ,
+                                   NULL, OPEN_EXISTING, 
+                                   FILE_ATTRIBUTE_NORMAL | FILE_FLAG_NO_BUFFERING,
+                                   NULL);
+            if (fp != INVALID_HANDLE_VALUE) {
+                DWORD sig = getFileSignature(fp, 256);
+                fwprintf(logfp, L"sig: %s: %08x\n", name, sig);
+                FileEntry* entry = findFileEntry(watcher->files, name);
+                if (entry == NULL) {
+                    fwprintf(logfp, L"added: %s\n", name);
+                    entry = (FileEntry*) malloc(sizeof(FileEntry));
+                    StringCchCopy(entry->name, _countof(entry->name), name);
+                    entry->sig = sig;
+                    entry->next = watcher->files;
+                    watcher->files = entry;
+                    found = entry;
+                } else if (sig != entry->sig) {
+                    fwprintf(logfp, L"updated: %s\n", name);
+                    entry->sig = sig;
+                    found = entry;
+                }
+                CloseHandle(fp);
+            }
+        }
 	if (!FindNextFile(fft, &data)) break;
     }
     FindClose(fft);
@@ -464,7 +476,7 @@ static LRESULT CALLBACK clipWatcherWndProc(
 	ClipWatcher* watcher = (ClipWatcher*)(cs->lpCreateParams);
 	if (watcher != NULL) {
 	    SetWindowLongPtr(hWnd, GWLP_USERDATA, (LONG_PTR)watcher);
-	    fwprintf(logfp, L"watching: %s\n", watcher->name);
+	    fwprintf(logfp, L"watcher: %s\n", watcher->name);
 	    // Start watching the clipboard content.
             AddClipboardFormatListener(hWnd);
 	    // Register the icon.
@@ -567,9 +579,10 @@ static LRESULT CALLBACK clipWatcherWndProc(
 	    FileEntry* entry = checkFileChanges(watcher);
 	    if (entry != NULL) {
 		fwprintf(logfp, L"file changed: %s\n", entry->name);
-                if (wcscmp(entry->name, watcher->name) != 0) {
+                int index = rindex(entry->name, L'.');
+                if (0 <= index && wcsncmp(entry->name, watcher->name, index) != 0) {
                     WCHAR path[MAX_PATH];
-                    StringCchPrintf(path, _countof(path), L"%s\\%s.txt", 
+                    StringCchPrintf(path, _countof(path), L"%s\\%s", 
                                     watcher->srcdir, entry->name);
                     int nchars;
                     LPWSTR text = readClipText(path, &nchars);
