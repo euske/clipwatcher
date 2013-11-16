@@ -16,7 +16,7 @@ const LPCWSTR DEFAULT_CLIPPATH = L"Clipboard";
 const LPCWSTR WINDOW_TITLE = L"ClipWatcher";
 const LPCWSTR WATCHING_DIR = L"Watching: %s";
 const LPCWSTR CLIPBOARD_UPDATED = L"Clipboard Updated";
-const LPCWSTR DIRECTORY_NOTFOUND = L"Directory not found: %s";
+const LPCWSTR CLIPBOARD_TYPE_BITMAP = L"Bitmap";
 
 const LPCWSTR OP_OPEN = L"open";
 const DWORD MAX_FILE_SIZE = 32767;
@@ -558,6 +558,8 @@ static LRESULT CALLBACK clipWatcherWndProc(
                                 StringCchPrintf(path, _countof(path), L"%s\\%s.bmp", 
                                                 watcher->dstdir, watcher->name);
                                 writeClipDIB(path, bytes, nbytes);
+                                popupInfo(hWnd, watcher->icon_id,
+                                          CLIPBOARD_UPDATED, CLIPBOARD_TYPE_BITMAP);
                                 GlobalUnlock(bytes);
                             }
                         }
@@ -581,25 +583,31 @@ static LRESULT CALLBACK clipWatcherWndProc(
 		fwprintf(logfp, L"file changed: %s\n", entry->name);
                 int index = rindex(entry->name, L'.');
                 if (0 <= index && wcsncmp(entry->name, watcher->name, index) != 0) {
+                    WCHAR* ext = &(entry->name[index]);
                     WCHAR path[MAX_PATH];
                     StringCchPrintf(path, _countof(path), L"%s\\%s", 
                                     watcher->srcdir, entry->name);
-                    int nchars;
-                    LPWSTR text = readClipText(path, &nchars);
-                    if (text != NULL) {
-                        HANDLE data = createGlobalText(text, nchars);
-                        if (data != NULL) {
-                            for (int i = 0; i < CLIPBOARD_RETRY; i++) {
-                                Sleep(CLIPBOARD_DELAY);
-                                if (OpenClipboard(hWnd)) {
-                                    SetClipboardData(CF_TEXT, data);
-                                    CloseClipboard();
-                                    break;
+                    if (_wcsicmp(ext, L".txt") == 0) {
+                        // CF_TEXT
+                        int nchars;
+                        LPWSTR text = readClipText(path, &nchars);
+                        if (text != NULL) {
+                            HANDLE data = createGlobalText(text, nchars);
+                            if (data != NULL) {
+                                for (int i = 0; i < CLIPBOARD_RETRY; i++) {
+                                    Sleep(CLIPBOARD_DELAY);
+                                    if (OpenClipboard(hWnd)) {
+                                        SetClipboardData(CF_TEXT, data);
+                                        CloseClipboard();
+                                        break;
+                                    }
                                 }
+                                GlobalFree(data);
                             }
-                            GlobalFree(data);
+                            free(text);
                         }
-                        free(text);
+                    } else if (_wcsicmp(ext, L".bmp") == 0) {
+                        // CF_DIB
                     }
 		}
 	    }
