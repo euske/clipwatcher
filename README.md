@@ -1,17 +1,17 @@
 ClipWatcher
 ===========
 
-ClipWatcher (Clipboard Watcher) watches the clipboard content and 
-synchronizes it with files in a given directory (default: `%UserProfile%/Clipboard`). 
+ClipWatcher (Clipboard Watcher) synchronizes the clipboard content with files.
 By sharing this folder with other computers, it allows sharing a clipboard 
 content among multiple machines.
 
 The exchange is bidirectional. When you copy a text, the content is saved
 as %ComputerName%.txt (e.g. `C:\Users\euske\Clipboard\EUSKE-HP.txt`).
 When a file is created or modified within the directory, the content is
-automatically copied to the clipboard.
+automatically copied to the clipboard. 
+The default directory is `%UserProfile%/Clipboard`. 
 
-Currently, only text formats are supported.
+Currently, only text (.txt) and bitmap (.bmp) formats are supported.
 
 How to Use
 ----------
@@ -31,7 +31,6 @@ TODO
 ----
 
  * Better GUI.
- * Support Bitmap types.
 
 Terms and Conditions
 --------------------
