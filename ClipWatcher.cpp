@@ -34,20 +34,28 @@ typedef enum _MenuItemID {
     IDM_OPEN,
 };
 
-static size_t getBfOffBits(BITMAPINFO* bmp)
+static int getNumColors(BITMAPINFO* bmp)
 {
     int ncolors = bmp->bmiHeader.biClrUsed;
     if (ncolors == 0) {
         switch (bmp->bmiHeader.biBitCount) {
         case 1:
             ncolors = 2;
-            break;
         case 8:
             ncolors = 256;
-            break;
         }
     }
-    return (bmp->bmiHeader.biSize + ncolors*sizeof(RGBQUAD));
+    return ncolors;
+}
+
+static size_t getBMPHeaderSize(BITMAPINFO* bmp)
+{
+    return (bmp->bmiHeader.biSize + getNumColors(bmp)*sizeof(RGBQUAD));
+}
+
+static size_t getBMPSize(BITMAPINFO* bmp)
+{
+    return (getBMPHeaderSize(bmp) + bmp->bmiHeader.biSizeImage);
 }
 
 static LPWSTR getWCHARfromCHAR(LPCSTR bytes, int nbytes, int* pnchars)
@@ -118,24 +126,31 @@ static int istartswith(LPCWSTR text1, LPCWSTR text2)
     return (*text2 == 0);
 }
 
-// createGlobalText(text, nchars)
-static HANDLE createGlobalText(LPCWSTR text, int nchars)
+// setClipboardText(text, nchars)
+static void setClipboardText(HWND hWnd, LPCWSTR text, int nchars)
 {
-    HANDLE data = NULL;
     int nbytes;
     LPSTR src = getCHARfromWCHAR(text, nchars, &nbytes);
     if (src != NULL) {
-	data = GlobalAlloc(GHND, nbytes+1);
+	HANDLE data = GlobalAlloc(GHND, nbytes+1);
 	if (data != NULL) {
 	    LPSTR dst = (LPSTR) GlobalLock(data);
 	    if (dst != NULL) {
 		CopyMemory(dst, src, nbytes+1);
 		GlobalUnlock(data);
+                for (int i = 0; i < CLIPBOARD_RETRY; i++) {
+                    Sleep(CLIPBOARD_DELAY);
+                    if (OpenClipboard(hWnd)) {
+                        SetClipboardData(CF_TEXT, data);
+                        CloseClipboard();
+                        break;
+                    }
+                }
+                GlobalFree(data);
 	    }
 	}
 	free(src);
     }
-    return data;
 }
 
 // writeClipBytes(path, bytes, nbytes)
@@ -170,7 +185,7 @@ static void writeClipDIB(LPCWSTR path, LPVOID bytes, SIZE_T nbytes)
     BITMAPFILEHEADER filehdr = {0};
     filehdr.bfType = 0x4d42;    // 'BM' in little endian.
     filehdr.bfSize = sizeof(filehdr)+nbytes;
-    filehdr.bfOffBits = sizeof(filehdr)+getBfOffBits((BITMAPINFO*)bytes);
+    filehdr.bfOffBits = sizeof(filehdr)+getBMPHeaderSize((BITMAPINFO*)bytes);
     HANDLE fp = CreateFile(path, GENERIC_WRITE, 0,
 			   NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, 
 			   NULL);
@@ -592,22 +607,18 @@ static LRESULT CALLBACK clipWatcherWndProc(
                         int nchars;
                         LPWSTR text = readClipText(path, &nchars);
                         if (text != NULL) {
-                            HANDLE data = createGlobalText(text, nchars);
-                            if (data != NULL) {
-                                for (int i = 0; i < CLIPBOARD_RETRY; i++) {
-                                    Sleep(CLIPBOARD_DELAY);
-                                    if (OpenClipboard(hWnd)) {
-                                        SetClipboardData(CF_TEXT, data);
-                                        CloseClipboard();
-                                        break;
-                                    }
-                                }
-                                GlobalFree(data);
-                            }
+                            setClipboardText(hWnd, text, nchars);
                             free(text);
                         }
                     } else if (_wcsicmp(ext, L".bmp") == 0) {
                         // CF_DIB
+#if 0
+                        BITMAPINFO* bmp = readClipDIB(path);
+                        if (bmp != NULL) {
+                            setClipboardDIB(hWnd, bmp);
+                            free(bmp);
+                        }
+#endif
                     }
 		}
 	    }
