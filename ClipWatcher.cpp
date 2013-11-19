@@ -25,6 +25,7 @@ const UINT CLIPBOARD_DELAY = 100;
 const UINT WM_NOTIFY_ICON = WM_USER+1;
 const UINT WM_NOTIFY_FILE = WM_NOTIFY_ICON+1;
 const UINT TIMER_INTERVAL = 400;
+const WORD BMP_SIGNATURE = 0x4d42; // 'BM' in little endian.
 
 static FILE* logfp = stderr;
 
@@ -138,23 +139,46 @@ static void setClipboardText(HWND hWnd, LPCWSTR text, int nchars)
 	    if (dst != NULL) {
 		CopyMemory(dst, src, nbytes+1);
 		GlobalUnlock(data);
-                for (int i = 0; i < CLIPBOARD_RETRY; i++) {
-                    Sleep(CLIPBOARD_DELAY);
-                    if (OpenClipboard(hWnd)) {
-                        SetClipboardData(CF_TEXT, data);
-                        CloseClipboard();
-                        break;
-                    }
+                if (OpenClipboard(hWnd)) {
+                    EmptyClipboard();
+                    SetClipboardData(CF_TEXT, data);
+                    CloseClipboard();
+                    data = NULL;
                 }
-                GlobalFree(data);
 	    }
+            if (data != NULL) {
+                GlobalFree(data);
+            }
 	}
 	free(src);
     }
 }
 
-// writeClipBytes(path, bytes, nbytes)
-static void writeClipBytes(LPCWSTR path, LPVOID bytes, int nbytes)
+// setClipboardDIB(bmp)
+static void setClipboardDIB(HWND hWnd, BITMAPINFO* src)
+{
+    size_t nbytes = getBMPSize(src);
+    HANDLE data = GlobalAlloc(GHND, nbytes);
+    if (data != NULL) {
+        LPVOID dst = GlobalLock(data);
+        if (dst != NULL) {
+            CopyMemory(dst, src, nbytes);
+            GlobalUnlock(data);
+            if (OpenClipboard(hWnd)) {
+                EmptyClipboard();
+                SetClipboardData(CF_DIB, data);
+                CloseClipboard();
+                data = NULL;
+            }
+        }
+        if (data != NULL) {
+            GlobalFree(data);
+        }
+    }
+}
+
+// writeBytes(path, bytes, nbytes)
+static void writeBytes(LPCWSTR path, LPVOID bytes, int nbytes)
 {
     HANDLE fp = CreateFile(path, GENERIC_WRITE, 0,
 			   NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, 
@@ -167,39 +191,20 @@ static void writeClipBytes(LPCWSTR path, LPVOID bytes, int nbytes)
     }
 }
 
-// writeClipText(path, text, nchars)
-static void writeClipText(LPCWSTR path, LPCWSTR text, int nchars)
+// writeTextFile(path, text, nchars)
+static void writeTextFile(LPCWSTR path, LPCWSTR text, int nchars)
 {
     int nbytes;
     LPSTR bytes = getCHARfromWCHAR(text, nchars, &nbytes);
     nbytes--;
     if (bytes != NULL) {
-        writeClipBytes(path, bytes, nbytes);
+        writeBytes(path, bytes, nbytes);
         free(bytes);
     }
 }
 
-// writeClipDIB(path, bytes, nbytes)
-static void writeClipDIB(LPCWSTR path, LPVOID bytes, SIZE_T nbytes)
-{
-    BITMAPFILEHEADER filehdr = {0};
-    filehdr.bfType = 0x4d42;    // 'BM' in little endian.
-    filehdr.bfSize = sizeof(filehdr)+nbytes;
-    filehdr.bfOffBits = sizeof(filehdr)+getBMPHeaderSize((BITMAPINFO*)bytes);
-    HANDLE fp = CreateFile(path, GENERIC_WRITE, 0,
-			   NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, 
-			   NULL);
-    if (fp != INVALID_HANDLE_VALUE) {
-	fwprintf(logfp, L"write file: path=%s, nbytes=%u\n", path, filehdr.bfSize);
-        DWORD writtenbytes;
-        WriteFile(fp, &filehdr, sizeof(filehdr), &writtenbytes, NULL);
-        WriteFile(fp, bytes, nbytes, &writtenbytes, NULL);
-	CloseHandle(fp);
-    }
-}
-
-// readClipText(path, &nchars)
-static LPWSTR readClipText(LPCWSTR path, int* nchars)
+// readTextFile(path, &nchars)
+static LPWSTR readTextFile(LPCWSTR path, int* nchars)
 {
     LPWSTR text = NULL;
     HANDLE fp = CreateFile(path, GENERIC_READ, FILE_SHARE_READ,
@@ -222,6 +227,49 @@ static LPWSTR readClipText(LPCWSTR path, int* nchars)
     }
 
     return text;
+}
+
+// writeBMPFile(path, bytes, nbytes)
+static void writeBMPFile(LPCWSTR path, LPVOID bytes, SIZE_T nbytes)
+{
+    BITMAPFILEHEADER filehdr = {0};
+    filehdr.bfType = BMP_SIGNATURE;
+    filehdr.bfSize = sizeof(filehdr)+nbytes;
+    filehdr.bfOffBits = sizeof(filehdr)+getBMPHeaderSize((BITMAPINFO*)bytes);
+    HANDLE fp = CreateFile(path, GENERIC_WRITE, 0,
+			   NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, 
+			   NULL);
+    if (fp != INVALID_HANDLE_VALUE) {
+	fwprintf(logfp, L"write file: path=%s, nbytes=%u\n", path, filehdr.bfSize);
+        DWORD writtenbytes;
+        WriteFile(fp, &filehdr, sizeof(filehdr), &writtenbytes, NULL);
+        WriteFile(fp, bytes, nbytes, &writtenbytes, NULL);
+	CloseHandle(fp);
+    }
+}
+
+// readBMPFile(path, &nchars)
+static BITMAPINFO* readBMPFile(LPCWSTR path)
+{
+    BITMAPINFO* bmp = NULL;
+    HANDLE fp = CreateFile(path, GENERIC_READ, FILE_SHARE_READ,
+			   NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 
+			   NULL);
+    if (fp != INVALID_HANDLE_VALUE) {
+        DWORD readbytes;
+        BITMAPFILEHEADER filehdr;
+        ReadFile(fp, &filehdr, sizeof(filehdr), &readbytes, NULL);
+        if (filehdr.bfType == BMP_SIGNATURE) {
+            DWORD bmpsize = filehdr.bfSize - sizeof(filehdr);
+            bmp = (BITMAPINFO*) malloc(bmpsize);
+            if (bmp != NULL) {
+                ReadFile(fp, bmp, bmpsize, &readbytes, NULL);
+            }
+	}
+	CloseHandle(fp);
+    }
+
+    return bmp;
 }
 
 // openClipText(name, text, nchars)
@@ -247,7 +295,7 @@ static void openClipText(LPCWSTR name, LPCWSTR text, int nchars)
 	GetTempPath(MAX_PATH, temppath);
 	WCHAR path[MAX_PATH];
 	StringCchPrintf(path, _countof(path), L"%s\\%s.txt", temppath, name);
-	writeClipText(path, text, nchars);
+	writeTextFile(path, text, nchars);
 	ShellExecute(NULL, OP_OPEN, path, NULL, NULL, SW_SHOWDEFAULT);
     }
 }
@@ -554,7 +602,7 @@ static LRESULT CALLBACK clipWatcherWndProc(
                                     WCHAR path[MAX_PATH];
                                     StringCchPrintf(path, _countof(path), L"%s\\%s.txt", 
                                                     watcher->dstdir, watcher->name);
-                                    writeClipText(path, text, nchars);
+                                    writeTextFile(path, text, nchars);
                                     popupInfo(hWnd, watcher->icon_id,
                                               CLIPBOARD_UPDATED, text);
                                     watcher->blink_count = 10;
@@ -572,7 +620,7 @@ static LRESULT CALLBACK clipWatcherWndProc(
                                 WCHAR path[MAX_PATH];
                                 StringCchPrintf(path, _countof(path), L"%s\\%s.bmp", 
                                                 watcher->dstdir, watcher->name);
-                                writeClipDIB(path, bytes, nbytes);
+                                writeBMPFile(path, bytes, nbytes);
                                 popupInfo(hWnd, watcher->icon_id,
                                           CLIPBOARD_UPDATED, CLIPBOARD_TYPE_BITMAP);
                                 GlobalUnlock(bytes);
@@ -605,20 +653,18 @@ static LRESULT CALLBACK clipWatcherWndProc(
                     if (_wcsicmp(ext, L".txt") == 0) {
                         // CF_TEXT
                         int nchars;
-                        LPWSTR text = readClipText(path, &nchars);
+                        LPWSTR text = readTextFile(path, &nchars);
                         if (text != NULL) {
                             setClipboardText(hWnd, text, nchars);
                             free(text);
                         }
                     } else if (_wcsicmp(ext, L".bmp") == 0) {
                         // CF_DIB
-#if 0
-                        BITMAPINFO* bmp = readClipDIB(path);
+                        BITMAPINFO* bmp = readBMPFile(path);
                         if (bmp != NULL) {
                             setClipboardDIB(hWnd, bmp);
                             free(bmp);
                         }
-#endif
                     }
 		}
 	    }
