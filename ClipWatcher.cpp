@@ -331,10 +331,14 @@ typedef struct _ClipWatcher {
     FileEntry* files;
     DWORD seqno;
 
-    HICON icons[2];
     UINT icon_id;
     UINT_PTR timer_id;
-    int blink_count;
+
+    HICON icon_empty;
+    HICON icon_text;
+    HICON icon_bitmap;
+    HICON icon_blinking;
+    int icon_blink_count;
 } ClipWatcher;
 
 // findFileEntry(files, name)
@@ -424,11 +428,13 @@ ClipWatcher* CreateClipWatcher(
     watcher->files = NULL;
     watcher->seqno = 0;
 
-    watcher->icons[0] = LoadIcon(hInstance, MAKEINTRESOURCE(IDI_CLIPEMPTY));
-    watcher->icons[1] = LoadIcon(hInstance, MAKEINTRESOURCE(IDI_CLIPFULL));
     watcher->icon_id = 1;
     watcher->timer_id = 1;
-    watcher->blink_count = 0;
+    watcher->icon_empty = LoadIcon(hInstance, MAKEINTRESOURCE(IDI_CLIPEMPTY));
+    watcher->icon_text = LoadIcon(hInstance, MAKEINTRESOURCE(IDI_CLIPTEXT));
+    watcher->icon_bitmap = LoadIcon(hInstance, MAKEINTRESOURCE(IDI_CLIPBITMAP));
+    watcher->icon_blinking = NULL;
+    watcher->icon_blink_count = 0;
     return watcher;
 }
 
@@ -528,7 +534,7 @@ static LRESULT CALLBACK clipWatcherWndProc(
 	    nidata.uID = watcher->icon_id;
 	    nidata.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
 	    nidata.uCallbackMessage = WM_NOTIFY_ICON;
-	    nidata.hIcon = watcher->icons[0];
+	    nidata.hIcon = watcher->icon_empty;
 	    StringCchPrintf(nidata.szTip, _countof(nidata.szTip),
 			    WATCHING_DIR, watcher->srcdir);
 	    Shell_NotifyIcon(NIM_ADD, &nidata);
@@ -584,7 +590,8 @@ static LRESULT CALLBACK clipWatcherWndProc(
                                     writeTextFile(path, text, nchars);
                                     popupInfo(hWnd, watcher->icon_id,
                                               CLIPBOARD_UPDATED, text);
-                                    watcher->blink_count = 10;
+                                    watcher->icon_blinking = watcher->icon_text;
+                                    watcher->icon_blink_count = 10;
                                     free(text);
                                 }
                                 GlobalUnlock(data);
@@ -602,6 +609,8 @@ static LRESULT CALLBACK clipWatcherWndProc(
                                 writeBMPFile(path, bytes, nbytes);
                                 popupInfo(hWnd, watcher->icon_id,
                                           CLIPBOARD_UPDATED, CLIPBOARD_TYPE_BITMAP);
+                                watcher->icon_blinking = watcher->icon_bitmap;
+                                watcher->icon_blink_count = 10;
                                 GlobalUnlock(bytes);
                             }
                         }
@@ -735,10 +744,11 @@ static LRESULT CALLBACK clipWatcherWndProc(
 	ClipWatcher* watcher = (ClipWatcher*)lp;
 	if (watcher != NULL) {
             // Blink the icon.
-            if (watcher->blink_count) {
-                watcher->blink_count--;
-                showIcon(hWnd, watcher->icon_id,
-                         watcher->icons[(watcher->blink_count % 2)]);
+            if (watcher->icon_blink_count) {
+                watcher->icon_blink_count--;
+                BOOL on = (watcher->icon_blink_count % 2);
+                showIcon(hWnd, watcher->icon_id, 
+                         (on? watcher->icon_blinking : watcher->icon_empty));
             }
         }
         return FALSE;

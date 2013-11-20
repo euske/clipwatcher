@@ -39,7 +39,7 @@ $(TARGET): $(OBJS)
 	$(MT) -manifest $@.manifest -outputresource:$@;1
 
 ClipWatcher.cpp: Resource.h
-ClipWatcher.rc: Resource.h ClipWatcher.ico
+ClipWatcher.rc: Resource.h ClipWatcher.ico ClipEmpty.ico ClipText.ico ClipBitmap.ico
 
 .cpp.obj:
 	$(CL) $(CFLAGS) /Fo$@ /c $< $(DEFS) $(INCLUDES)
