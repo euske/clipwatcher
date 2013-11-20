@@ -13,12 +13,10 @@
 #pragma comment(lib, "shell32.lib")
 
 const LPCWSTR DEFAULT_CLIPPATH = L"Clipboard";
-const LPCWSTR WINDOW_TITLE = L"ClipWatcher";
 const LPCWSTR WATCHING_DIR = L"Watching: %s";
 const LPCWSTR CLIPBOARD_UPDATED = L"Clipboard Updated";
 const LPCWSTR CLIPBOARD_TYPE_BITMAP = L"Bitmap";
 
-const LPCWSTR OP_OPEN = L"open";
 const DWORD MAX_FILE_SIZE = 32767;
 const int CLIPBOARD_RETRY = 3;
 const UINT CLIPBOARD_DELAY = 100;
@@ -269,6 +267,8 @@ static BITMAPINFO* readBMPFile(LPCWSTR path)
 // openClipText(name, text, nchars)
 static void openClipText(LPCWSTR name, LPCWSTR text, int nchars)
 {
+    const LPCWSTR OP_OPEN = L"open";
+
     if (istartswith(text, L"http://") ||
 	istartswith(text, L"https://")) {
 	LPWSTR url = (LPWSTR) malloc(sizeof(WCHAR)*(nchars+1));
@@ -813,7 +813,7 @@ int ClipWatcherMain(
     // Create a SysTray window.
     HWND hWnd = CreateWindow(
 	(LPCWSTR)atom,
-	WINDOW_TITLE,
+	L"ClipWatcher",
 	(WS_OVERLAPPED | WS_SYSMENU),
 	CW_USEDEFAULT, CW_USEDEFAULT,
 	CW_USEDEFAULT, CW_USEDEFAULT,
