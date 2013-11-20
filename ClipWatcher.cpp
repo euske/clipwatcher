@@ -29,12 +29,6 @@ const WORD BMP_SIGNATURE = 0x4d42; // 'BM' in little endian.
 
 static FILE* logfp = stderr;
 
-typedef enum _MenuItemID {
-    IDM_NONE = 0,
-    IDM_EXIT,
-    IDM_OPEN,
-};
-
 static int getNumColors(BITMAPINFO* bmp)
 {
     int ncolors = bmp->bmiHeader.biClrUsed;
@@ -505,22 +499,6 @@ static void showIcon(HWND hWnd, UINT icon_id, HICON hIcon)
     Shell_NotifyIcon(NIM_MODIFY, &nidata);
 }
 
-// displayContextMenu
-static void displayContextMenu(HWND hWnd, POINT pt)
-{
-    HMENU menu = CreatePopupMenu();
-    if (menu != NULL) {
-	AppendMenu(menu, MF_STRING | MF_ENABLED,
-		   IDM_OPEN, L"&Open");
-	AppendMenu(menu, MF_STRING | MF_ENABLED,
-		   IDM_EXIT, L"E&xit");
-        SetMenuDefaultItem(menu, IDM_OPEN, FALSE);
-	TrackPopupMenu(menu, TPM_LEFTALIGN, 
-		       pt.x, pt.y, 0, hWnd, NULL);
-	DestroyMenu(menu);
-    }
-}
-
 
 //  clipWatcherWndProc
 //
@@ -724,17 +702,26 @@ static LRESULT CALLBACK clipWatcherWndProc(
     {
         // UI event handling.
 	POINT pt;
+        HMENU menu = GetMenu(hWnd);
 	switch (lParam) {
 	case WM_LBUTTONDBLCLK:
-	    SendMessage(hWnd, WM_COMMAND, 
-			MAKEWPARAM(IDM_OPEN, 1), NULL);
+            if (menu != NULL) {
+                menu = GetSubMenu(menu, 0);
+                UINT item = GetMenuDefaultItem(menu, FALSE, 0);
+                SendMessage(hWnd, WM_COMMAND, MAKEWPARAM(item, 1), NULL);
+            }
 	    break;
 	case WM_LBUTTONUP:
 	    break;
 	case WM_RBUTTONUP:
 	    if (GetCursorPos(&pt)) {
-		SetForegroundWindow(hWnd);
-		displayContextMenu(hWnd, pt);
+                SetForegroundWindow(hWnd);
+                if (menu != NULL) {
+                    menu = GetSubMenu(menu, 0);
+                    SetMenuDefaultItem(menu, IDM_OPEN, FALSE);
+                    TrackPopupMenu(menu, TPM_LEFTALIGN, 
+                                   pt.x, pt.y, 0, hWnd, NULL);
+                }
 		PostMessage(hWnd, WM_NULL, 0, 0);
 	    }
 	    break;
@@ -813,6 +800,7 @@ int ClipWatcherMain(
 	klass.hInstance = hInstance;
 	klass.hIcon = LoadIcon(hInstance, MAKEINTRESOURCE(IDI_CLIPWATCHER));
 	klass.hbrBackground = (HBRUSH)(COLOR_WINDOW+1);
+        klass.lpszMenuName = MAKEINTRESOURCE(IDM_POPUPMENU);
 	klass.lpszClassName = L"ClipWatcherClass";
 	atom = RegisterClass(&klass);
     }

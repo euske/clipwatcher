@@ -33,3 +33,12 @@ END
 IDI_CLIPWATCHER ICON "ClipWatcher.ico"
 IDI_CLIPEMPTY ICON "ClipEmpty.ico"
 IDI_CLIPFULL ICON "ClipFull.ico"
+
+IDM_POPUPMENU MENU
+BEGIN
+    POPUP "&File"
+    BEGIN
+        MENUITEM "&Open", IDM_OPEN
+        MENUITEM "E&xit", IDM_EXIT
+    END
+END

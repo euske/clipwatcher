@@ -1,4 +1,6 @@
 #define IDI_CLIPWATCHER 100
 #define IDI_CLIPEMPTY 101
 #define IDI_CLIPFULL 102
-
+#define IDM_POPUPMENU 100
+#define IDM_EXIT 101
+#define IDM_OPEN 102
