@@ -300,10 +300,10 @@ static void openClipText(LPCWSTR name, LPCWSTR text, int nchars)
     }
 }
 
-// getFileSignature(fp)
-static DWORD getFileSignature(HANDLE fp, DWORD n)
+// getFileHash(fp)
+static DWORD getFileHash(HANDLE fp, DWORD n)
 {
-    DWORD sig = 0;
+    DWORD hash = 0;
     DWORD bufsize = sizeof(DWORD)*n;
     DWORD* buf = (DWORD*) malloc(bufsize);
     if (buf != NULL) {
@@ -311,11 +311,11 @@ static DWORD getFileSignature(HANDLE fp, DWORD n)
 	ZeroMemory(buf, bufsize);
 	ReadFile(fp, buf, bufsize, &readbytes, NULL);
 	for (int i = 0; i < n; i++) {
-	    sig ^= buf[i];
+	    hash ^= buf[i];
 	}
 	free(buf);
     }
-    return sig;
+    return hash;
 }
 
 
@@ -323,7 +323,7 @@ static DWORD getFileSignature(HANDLE fp, DWORD n)
 // 
 typedef struct _FileEntry {
     WCHAR name[MAX_PATH];
-    DWORD sig;
+    DWORD hash;
     struct _FileEntry* next;
 } FileEntry;
 
@@ -387,20 +387,20 @@ static FileEntry* checkFileChanges(ClipWatcher* watcher)
                                    FILE_ATTRIBUTE_NORMAL | FILE_FLAG_NO_BUFFERING,
                                    NULL);
             if (fp != INVALID_HANDLE_VALUE) {
-                DWORD sig = getFileSignature(fp, 256);
-                fwprintf(logfp, L"sig: %s: %08x\n", name, sig);
+                DWORD hash = getFileHash(fp, 256);
+                fwprintf(logfp, L"hash: %s: %08x\n", name, hash);
                 FileEntry* entry = findFileEntry(watcher->files, name);
                 if (entry == NULL) {
                     fwprintf(logfp, L"added: %s\n", name);
                     entry = (FileEntry*) malloc(sizeof(FileEntry));
                     StringCchCopy(entry->name, _countof(entry->name), name);
-                    entry->sig = sig;
+                    entry->hash = hash;
                     entry->next = watcher->files;
                     watcher->files = entry;
                     found = entry;
-                } else if (sig != entry->sig) {
+                } else if (hash != entry->hash) {
                     fwprintf(logfp, L"updated: %s\n", name);
-                    entry->sig = sig;
+                    entry->hash = hash;
                     found = entry;
                 }
                 CloseHandle(fp);
