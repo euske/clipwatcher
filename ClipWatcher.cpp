@@ -511,9 +511,10 @@ static void displayContextMenu(HWND hWnd, POINT pt)
     HMENU menu = CreatePopupMenu();
     if (menu != NULL) {
 	AppendMenu(menu, MF_STRING | MF_ENABLED,
-		   IDM_OPEN, L"Open");
+		   IDM_OPEN, L"&Open");
 	AppendMenu(menu, MF_STRING | MF_ENABLED,
-		   IDM_EXIT, L"Exit");
+		   IDM_EXIT, L"E&xit");
+        SetMenuDefaultItem(menu, IDM_OPEN, FALSE);
 	TrackPopupMenu(menu, TPM_LEFTALIGN, 
 		       pt.x, pt.y, 0, hWnd, NULL);
 	DestroyMenu(menu);
