@@ -30,7 +30,7 @@ To quit the program, right click the icon and choose "Exit" menu.
 TODO
 ----
 
- * Better GUI.
+ * Support PNG format.
 
 Terms and Conditions
 --------------------
