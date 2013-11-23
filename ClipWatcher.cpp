@@ -187,6 +187,42 @@ static void setClipboardDIB(BITMAPINFO* src)
     }
 }
 
+// getClipboardText(buf, buflen)
+static int getClipboardText(LPWSTR buf, int buflen)
+{
+    int filetype = -1;
+
+    // CF_TEXT
+    HANDLE data = GetClipboardData(CF_TEXT);
+    if (data != NULL) {
+        LPSTR bytes = (LPSTR) GlobalLock(data);
+        if (bytes != NULL) {
+            int nchars;
+            LPWSTR text = getWCHARfromCHAR(bytes, GlobalSize(data), &nchars);
+            if (text != NULL) {
+                filetype = FILETYPE_TEXT;
+                StringCchCopy(buf, buflen, text);
+                free(text);
+            }
+            GlobalUnlock(data);
+        }
+    }
+
+    // CF_DIB
+    data = GetClipboardData(CF_DIB);
+    if (data != NULL) {
+        LPVOID bytes = GlobalLock(data);
+        if (bytes != NULL) {
+            SIZE_T nbytes = GlobalSize(data);
+            filetype = FILETYPE_BITMAP;
+            StringCchCopy(buf, buflen, L"BITMAP");
+            GlobalUnlock(bytes);
+        }
+    }
+    
+    return filetype;
+}
+
 // writeBytes(path, bytes, nbytes)
 static void writeBytes(LPCWSTR path, LPVOID bytes, int nbytes)
 {
@@ -194,7 +230,7 @@ static void writeBytes(LPCWSTR path, LPVOID bytes, int nbytes)
 			   NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, 
 			   NULL);
     if (fp != INVALID_HANDLE_VALUE) {
-	fwprintf(logfp, L"write file: path=%s, nbytes=%u\n", path, nbytes);
+	fwprintf(logfp, L"write: path=%s, nbytes=%u\n", path, nbytes);
         DWORD writtenbytes;
         WriteFile(fp, bytes, nbytes, &writtenbytes, NULL);
 	CloseHandle(fp);
@@ -225,7 +261,7 @@ static LPWSTR readTextFile(LPCWSTR path, int* nchars)
 	if (MAX_FILE_SIZE < nbytes) {
 	    nbytes = MAX_FILE_SIZE;
 	}
-	fwprintf(logfp, L"read file: path=%s, nbytes=%u\n", path, nbytes);
+	fwprintf(logfp, L"read: path=%s, nbytes=%u\n", path, nbytes);
 	LPSTR bytes = (LPSTR) malloc(nbytes);
 	if (bytes != NULL) {
 	    DWORD readbytes;
@@ -250,7 +286,7 @@ static void writeBMPFile(LPCWSTR path, LPVOID bytes, SIZE_T nbytes)
 			   NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, 
 			   NULL);
     if (fp != INVALID_HANDLE_VALUE) {
-	fwprintf(logfp, L"write file: path=%s, nbytes=%u\n", path, filehdr.bfSize);
+	fwprintf(logfp, L"write: path=%s, nbytes=%u\n", path, filehdr.bfSize);
         DWORD writtenbytes;
         WriteFile(fp, &filehdr, sizeof(filehdr), &writtenbytes, NULL);
         WriteFile(fp, bytes, nbytes, &writtenbytes, NULL);
@@ -341,11 +377,9 @@ static BOOL openClipFile()
     return success;
 }
 
-// exportClipFile(basepath, dst, dstlen)
-static int exportClipFile(LPCWSTR basepath, LPWSTR buf, int buflen)
+// exportClipFile(basepath)
+static void exportClipFile(LPCWSTR basepath)
 {
-    int filetype = -1;
-
     // CF_TEXT
     HANDLE data = GetClipboardData(CF_TEXT);
     if (data != NULL) {
@@ -358,8 +392,6 @@ static int exportClipFile(LPCWSTR basepath, LPWSTR buf, int buflen)
                 StringCchPrintf(path, _countof(path), L"%s.txt", basepath);
                 setClipboardOrigin(path);
                 writeTextFile(path, text, nchars);
-                filetype = FILETYPE_TEXT;
-                StringCchCopy(buf, buflen, text);
                 free(text);
             }
             GlobalUnlock(data);
@@ -376,13 +408,9 @@ static int exportClipFile(LPCWSTR basepath, LPWSTR buf, int buflen)
             StringCchPrintf(path, _countof(path), L"%s.bmp", basepath);
             setClipboardOrigin(path);
             writeBMPFile(path, bytes, nbytes);
-            filetype = FILETYPE_BITMAP;
-            StringCchCopy(buf, buflen, path);
             GlobalUnlock(bytes);
         }
     }
-    
-    return filetype;
 }
 
 // getFileHash(fp)
@@ -476,10 +504,10 @@ static FileEntry* checkFileChanges(ClipWatcher* watcher)
                                    NULL);
             if (fp != INVALID_HANDLE_VALUE) {
                 DWORD hash = getFileHash(fp, 256);
-                fwprintf(logfp, L"hash: %s: %08x\n", name, hash);
+                fwprintf(logfp, L"check: name=%s (%08x)\n", name, hash);
                 FileEntry* entry = findFileEntry(watcher->files, path);
                 if (entry == NULL) {
-                    fwprintf(logfp, L"added: %s\n", name);
+                    fwprintf(logfp, L"added: name=%s\n", name);
                     entry = (FileEntry*) malloc(sizeof(FileEntry));
                     StringCchCopy(entry->path, _countof(entry->path), path);
                     entry->hash = hash;
@@ -487,7 +515,7 @@ static FileEntry* checkFileChanges(ClipWatcher* watcher)
                     watcher->files = entry;
                     found = entry;
                 } else if (hash != entry->hash) {
-                    fwprintf(logfp, L"updated: %s\n", name);
+                    fwprintf(logfp, L"updated: name=%s\n", name);
                     entry->hash = hash;
                     found = entry;
                 }
@@ -637,7 +665,7 @@ static LRESULT CALLBACK clipWatcherWndProc(
             DWORD seqno = GetClipboardSequenceNumber();
 	    if (watcher->seqno < seqno) {
                 watcher->seqno = seqno;
-                fwprintf(logfp, L"clipboard changed: seqno=%d\n", seqno);
+                fwprintf(logfp, L"updated clipboard: seqno=%d\n", seqno);
                 for (int i = 0; i < CLIPBOARD_RETRY; i++) {
                     Sleep(CLIPBOARD_DELAY);
                     if (OpenClipboard(hWnd)) {
@@ -645,26 +673,27 @@ static LRESULT CALLBACK clipWatcherWndProc(
                             WCHAR path[MAX_PATH];
                             StringCchPrintf(path, _countof(path), L"%s\\%s", 
                                             watcher->dstdir, watcher->name);
-                            WCHAR text[256];
-                            int filetype = exportClipFile(path, text, _countof(text));
-                            if (0 <= filetype) {
-                                NOTIFYICONDATA nidata = {0};
-                                nidata.cbSize = sizeof(nidata);
-                                nidata.hWnd = hWnd;
-                                nidata.uID = watcher->icon_id;
-                                nidata.uFlags = NIF_INFO;
-                                nidata.dwInfoFlags = NIIF_INFO;
-                                nidata.uTimeout = 1;
-                                StringCchCopy(nidata.szInfoTitle, 
-                                              _countof(nidata.szInfoTitle), 
-                                              CLIPBOARD_UPDATED);
-                                StringCchCopy(nidata.szInfo, 
-                                              _countof(nidata.szInfo),
-                                              text);
-                                Shell_NotifyIcon(NIM_MODIFY, &nidata);
-                                watcher->icon_blinking = watcher->icon_filetype[filetype];
-                                watcher->icon_blink_count = ICON_BLINK_COUNT;
-                            }
+                            exportClipFile(path);
+                        }
+                        WCHAR text[256];
+                        int filetype = getClipboardText(text, _countof(text));
+                        if (0 <= filetype) {
+                            NOTIFYICONDATA nidata = {0};
+                            nidata.cbSize = sizeof(nidata);
+                            nidata.hWnd = hWnd;
+                            nidata.uID = watcher->icon_id;
+                            nidata.uFlags = NIF_INFO;
+                            nidata.dwInfoFlags = NIIF_INFO;
+                            nidata.uTimeout = 1;
+                            StringCchCopy(nidata.szInfoTitle, 
+                                          _countof(nidata.szInfoTitle), 
+                                          CLIPBOARD_UPDATED);
+                            StringCchCopy(nidata.szInfo, 
+                                          _countof(nidata.szInfo),
+                                          text);
+                            Shell_NotifyIcon(NIM_MODIFY, &nidata);
+                            watcher->icon_blinking = watcher->icon_filetype[filetype];
+                            watcher->icon_blink_count = ICON_BLINK_COUNT;
                         }
                         CloseClipboard();
                         break;
@@ -683,7 +712,7 @@ static LRESULT CALLBACK clipWatcherWndProc(
 	if (watcher != NULL) {
 	    FileEntry* entry = checkFileChanges(watcher);
 	    if (entry != NULL) {
-		fwprintf(logfp, L"file changed: %s\n", entry->path);
+		fwprintf(logfp, L"updated file: path=%s\n", entry->path);
                 int index = rindex(entry->path, L'.');
                 if (0 <= index) {
                     WCHAR* ext = &(entry->path[index]);
