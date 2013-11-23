@@ -22,7 +22,8 @@ const UINT CLIPBOARD_DELAY = 100;
 static UINT CF_ORIGIN;
 const UINT WM_NOTIFY_ICON = WM_USER+1;
 const UINT WM_NOTIFY_FILE = WM_NOTIFY_ICON+1;
-const UINT TIMER_INTERVAL = 400;
+const UINT ICON_BLINK_INTERVAL = 400;
+const UINT ICON_BLINK_COUNT = 10;
 const WORD BMP_SIGNATURE = 0x4d42; // 'BM' in little endian.
 const int FILETYPE_TEXT = 0;
 const int FILETYPE_BITMAP = 1;
@@ -340,6 +341,50 @@ static BOOL openClipFile()
     return success;
 }
 
+// exportClipFile(basepath, dst, dstlen)
+static int exportClipFile(LPCWSTR basepath, LPWSTR buf, int buflen)
+{
+    int filetype = -1;
+
+    // CF_TEXT
+    HANDLE data = GetClipboardData(CF_TEXT);
+    if (data != NULL) {
+        LPSTR bytes = (LPSTR) GlobalLock(data);
+        if (bytes != NULL) {
+            int nchars;
+            LPWSTR text = getWCHARfromCHAR(bytes, GlobalSize(data), &nchars);
+            if (text != NULL) {
+                WCHAR path[MAX_PATH];
+                StringCchPrintf(path, _countof(path), L"%s.txt", basepath);
+                setClipboardOrigin(path);
+                writeTextFile(path, text, nchars);
+                filetype = FILETYPE_TEXT;
+                StringCchCopy(buf, buflen, text);
+                free(text);
+            }
+            GlobalUnlock(data);
+        }
+    }
+
+    // CF_DIB
+    data = GetClipboardData(CF_DIB);
+    if (data != NULL) {
+        LPVOID bytes = GlobalLock(data);
+        if (bytes != NULL) {
+            SIZE_T nbytes = GlobalSize(data);
+            WCHAR path[MAX_PATH];
+            StringCchPrintf(path, _countof(path), L"%s.bmp", basepath);
+            setClipboardOrigin(path);
+            writeBMPFile(path, bytes, nbytes);
+            filetype = FILETYPE_BITMAP;
+            StringCchCopy(buf, buflen, path);
+            GlobalUnlock(bytes);
+        }
+    }
+    
+    return filetype;
+}
+
 // getFileHash(fp)
 static DWORD getFileHash(HANDLE fp, DWORD n)
 {
@@ -457,49 +502,6 @@ fail:
     return found;
 }
 
-static int exportClipFile(LPCWSTR basepath, LPWSTR dst, int dstlen)
-{
-    int filetype = -1;
-
-    // CF_TEXT
-    HANDLE data = GetClipboardData(CF_TEXT);
-    if (data != NULL) {
-        LPSTR bytes = (LPSTR) GlobalLock(data);
-        if (bytes != NULL) {
-            int nchars;
-            LPWSTR text = getWCHARfromCHAR(bytes, GlobalSize(data), &nchars);
-            if (text != NULL) {
-                WCHAR path[MAX_PATH];
-                StringCchPrintf(path, _countof(path), L"%s.txt", basepath);
-                setClipboardOrigin(path);
-                writeTextFile(path, text, nchars);
-                filetype = FILETYPE_TEXT;
-                StringCchCopy(dst, dstlen, text);
-                free(text);
-            }
-            GlobalUnlock(data);
-        }
-    }
-
-    // CF_DIB
-    data = GetClipboardData(CF_DIB);
-    if (data != NULL) {
-        LPVOID bytes = GlobalLock(data);
-        if (bytes != NULL) {
-            SIZE_T nbytes = GlobalSize(data);
-            WCHAR path[MAX_PATH];
-            StringCchPrintf(path, _countof(path), L"%s.bmp", basepath);
-            setClipboardOrigin(path);
-            writeBMPFile(path, bytes, nbytes);
-            filetype = FILETYPE_BITMAP;
-            StringCchCopy(dst, dstlen, path);
-            GlobalUnlock(bytes);
-        }
-    }
-    
-    return filetype;
-}
-
 //  CreateClipWatcher
 // 
 ClipWatcher* CreateClipWatcher(
@@ -568,33 +570,6 @@ void DestroyClipWatcher(ClipWatcher* watcher)
     free(watcher);
 }
 
-// popupInfo
-static void popupInfo(HWND hWnd, UINT icon_id, LPCWSTR title, LPCWSTR text)
-{
-    NOTIFYICONDATA nidata = {0};
-    nidata.cbSize = sizeof(nidata);
-    nidata.hWnd = hWnd;
-    nidata.uID = icon_id;
-    nidata.uFlags = NIF_INFO;
-    nidata.dwInfoFlags = NIIF_INFO;
-    nidata.uTimeout = 1;
-    StringCchCopy(nidata.szInfoTitle, _countof(nidata.szInfoTitle), title);
-    StringCchCopy(nidata.szInfo, _countof(nidata.szInfo), text);
-    Shell_NotifyIcon(NIM_MODIFY, &nidata);
-}
-
-// showIcon
-static void showIcon(HWND hWnd, UINT icon_id, HICON hIcon)
-{
-    NOTIFYICONDATA nidata = {0};
-    nidata.cbSize = sizeof(nidata);
-    nidata.hWnd = hWnd;
-    nidata.uID = icon_id;
-    nidata.uFlags = NIF_ICON;
-    nidata.hIcon = hIcon;
-    Shell_NotifyIcon(NIM_MODIFY, &nidata);
-}
-
 
 //  clipWatcherWndProc
 //
@@ -628,7 +603,7 @@ static LRESULT CALLBACK clipWatcherWndProc(
 	    StringCchPrintf(nidata.szTip, _countof(nidata.szTip),
 			    WATCHING_DIR, watcher->srcdir);
 	    Shell_NotifyIcon(NIM_ADD, &nidata);
-            SetTimer(hWnd, watcher->timer_id, TIMER_INTERVAL, NULL);
+            SetTimer(hWnd, watcher->timer_id, ICON_BLINK_INTERVAL, NULL);
 	}
 	return FALSE;
     }
@@ -673,10 +648,22 @@ static LRESULT CALLBACK clipWatcherWndProc(
                             WCHAR text[256];
                             int filetype = exportClipFile(path, text, _countof(text));
                             if (0 <= filetype) {
-                                popupInfo(hWnd, watcher->icon_id,
-                                          CLIPBOARD_UPDATED, text);
+                                NOTIFYICONDATA nidata = {0};
+                                nidata.cbSize = sizeof(nidata);
+                                nidata.hWnd = hWnd;
+                                nidata.uID = watcher->icon_id;
+                                nidata.uFlags = NIF_INFO;
+                                nidata.dwInfoFlags = NIIF_INFO;
+                                nidata.uTimeout = 1;
+                                StringCchCopy(nidata.szInfoTitle, 
+                                              _countof(nidata.szInfoTitle), 
+                                              CLIPBOARD_UPDATED);
+                                StringCchCopy(nidata.szInfo, 
+                                              _countof(nidata.szInfo),
+                                              text);
+                                Shell_NotifyIcon(NIM_MODIFY, &nidata);
                                 watcher->icon_blinking = watcher->icon_filetype[filetype];
-                                watcher->icon_blink_count = 10;
+                                watcher->icon_blink_count = ICON_BLINK_COUNT;
                             }
                         }
                         CloseClipboard();
@@ -810,8 +797,13 @@ static LRESULT CALLBACK clipWatcherWndProc(
             if (watcher->icon_blink_count) {
                 watcher->icon_blink_count--;
                 BOOL on = (watcher->icon_blink_count % 2);
-                showIcon(hWnd, watcher->icon_id, 
-                         (on? watcher->icon_blinking : watcher->icon_empty));
+                NOTIFYICONDATA nidata = {0};
+                nidata.cbSize = sizeof(nidata);
+                nidata.hWnd = hWnd;
+                nidata.uID = watcher->icon_id;
+                nidata.uFlags = NIF_ICON;
+                nidata.hIcon = (on? watcher->icon_blinking : watcher->icon_empty);
+                Shell_NotifyIcon(NIM_MODIFY, &nidata);
             }
         }
         return FALSE;
