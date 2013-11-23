@@ -16,17 +16,20 @@ const LPCWSTR DEFAULT_CLIPPATH = L"Clipboard";
 const LPCWSTR WATCHING_DIR = L"Watching: %s";
 const LPCWSTR CLIPBOARD_UPDATED = L"Clipboard Updated";
 
-const DWORD MAX_FILE_SIZE = 32767;
 const int CLIPBOARD_RETRY = 3;
 const UINT CLIPBOARD_DELAY = 100;
 static UINT CF_ORIGIN;
-const UINT WM_NOTIFY_ICON = WM_USER+1;
-const UINT WM_NOTIFY_FILE = WM_NOTIFY_ICON+1;
 const UINT ICON_BLINK_INTERVAL = 400;
 const UINT ICON_BLINK_COUNT = 10;
 const WORD BMP_SIGNATURE = 0x4d42; // 'BM' in little endian.
-const int FILETYPE_TEXT = 0;
-const int FILETYPE_BITMAP = 1;
+enum {
+    WM_NOTIFY_ICON = WM_USER+1,
+    WM_NOTIFY_FILE = WM_NOTIFY_ICON+1,
+};
+enum {
+    FILETYPE_TEXT = 0,
+    FILETYPE_BITMAP = 1,
+};
 
 static FILE* logfp = stderr;
 
@@ -252,6 +255,8 @@ static void writeTextFile(LPCWSTR path, LPCWSTR text, int nchars)
 // readTextFile(path, &nchars)
 static LPWSTR readTextFile(LPCWSTR path, int* nchars)
 {
+    const DWORD MAX_FILE_SIZE = 32767;
+
     LPWSTR text = NULL;
     HANDLE fp = CreateFile(path, GENERIC_READ, FILE_SHARE_READ,
 			   NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 
