@@ -407,7 +407,7 @@ static DWORD getFileHash(HANDLE fp, DWORD n)
 //  FileEntry
 // 
 typedef struct _FileEntry {
-    WCHAR name[MAX_PATH];
+    WCHAR path[MAX_PATH];
     DWORD hash;
     struct _FileEntry* next;
 } FileEntry;
@@ -431,11 +431,11 @@ typedef struct _ClipWatcher {
     int icon_blink_count;
 } ClipWatcher;
 
-// findFileEntry(files, name)
-static FileEntry* findFileEntry(FileEntry* entry, LPCWSTR name)
+// findFileEntry(files, path)
+static FileEntry* findFileEntry(FileEntry* entry, LPCWSTR path)
 {
     while (entry != NULL) {
-	if (wcsicmp(entry->name, name) == 0) return entry;
+	if (wcsicmp(entry->path, path) == 0) return entry;
 	entry = entry->next;
     }
     return entry;
@@ -477,11 +477,11 @@ static FileEntry* checkFileChanges(ClipWatcher* watcher)
             if (fp != INVALID_HANDLE_VALUE) {
                 DWORD hash = getFileHash(fp, 256);
                 fwprintf(logfp, L"hash: %s: %08x\n", name, hash);
-                FileEntry* entry = findFileEntry(watcher->files, name);
+                FileEntry* entry = findFileEntry(watcher->files, path);
                 if (entry == NULL) {
                     fwprintf(logfp, L"added: %s\n", name);
                     entry = (FileEntry*) malloc(sizeof(FileEntry));
-                    StringCchCopy(entry->name, _countof(entry->name), name);
+                    StringCchCopy(entry->path, _countof(entry->path), path);
                     entry->hash = hash;
                     entry->next = watcher->files;
                     watcher->files = entry;
@@ -683,21 +683,18 @@ static LRESULT CALLBACK clipWatcherWndProc(
 	if (watcher != NULL) {
 	    FileEntry* entry = checkFileChanges(watcher);
 	    if (entry != NULL) {
-		fwprintf(logfp, L"file changed: %s\n", entry->name);
-                int index = rindex(entry->name, L'.');
-                if (0 <= index && wcsncmp(entry->name, watcher->name, index) != 0) {
-                    WCHAR* ext = &(entry->name[index]);
-                    WCHAR path[MAX_PATH];
-                    StringCchPrintf(path, _countof(path), L"%s\\%s", 
-                                    watcher->srcdir, entry->name);
+		fwprintf(logfp, L"file changed: %s\n", entry->path);
+                int index = rindex(entry->path, L'.');
+                if (0 <= index) {
+                    WCHAR* ext = &(entry->path[index]);
                     if (_wcsicmp(ext, L".txt") == 0) {
                         // CF_TEXT
                         int nchars;
-                        LPWSTR text = readTextFile(path, &nchars);
+                        LPWSTR text = readTextFile(entry->path, &nchars);
                         if (text != NULL) {
                             if (OpenClipboard(hWnd)) {
                                 EmptyClipboard();
-                                setClipboardOrigin(path);
+                                setClipboardOrigin(entry->path);
                                 setClipboardText(text, nchars);
                                 CloseClipboard();
                             }
@@ -705,11 +702,11 @@ static LRESULT CALLBACK clipWatcherWndProc(
                         }
                     } else if (_wcsicmp(ext, L".bmp") == 0) {
                         // CF_DIB
-                        BITMAPINFO* bmp = readBMPFile(path);
+                        BITMAPINFO* bmp = readBMPFile(entry->path);
                         if (bmp != NULL) {
                             if (OpenClipboard(hWnd)) {
                                 EmptyClipboard();
-                                setClipboardOrigin(path);
+                                setClipboardOrigin(entry->path);
                                 setClipboardDIB(bmp);
                                 CloseClipboard();
                             }
