@@ -20,6 +20,7 @@ const LPCWSTR CLIPBOARD_TYPE_BITMAP = L"Bitmap";
 const DWORD MAX_FILE_SIZE = 32767;
 const int CLIPBOARD_RETRY = 3;
 const UINT CLIPBOARD_DELAY = 100;
+const UINT CF_ORIGIN;
 const UINT WM_NOTIFY_ICON = WM_USER+1;
 const UINT WM_NOTIFY_FILE = WM_NOTIFY_ICON+1;
 const UINT TIMER_INTERVAL = 400;
@@ -119,8 +120,31 @@ static int istartswith(LPCWSTR text1, LPCWSTR text2)
     return (*text2 == 0);
 }
 
+// setClipboardOrigin(path)
+static void setClipboardOrigin(LPCWSTR path)
+{
+    int nbytes;
+    LPSTR src = getCHARfromWCHAR(path, wcslen(path), &nbytes);
+    if (src != NULL) {
+	HANDLE data = GlobalAlloc(GHND, nbytes+1);
+	if (data != NULL) {
+	    LPSTR dst = (LPSTR) GlobalLock(data);
+	    if (dst != NULL) {
+		CopyMemory(dst, src, nbytes+1);
+		GlobalUnlock(data);
+                SetClipboardData(CF_ORIGIN, data);
+                data = NULL;
+	    }
+            if (data != NULL) {
+                GlobalFree(data);
+            }
+	}
+	free(src);
+    }
+}
+
 // setClipboardText(text, nchars)
-static void setClipboardText(HWND hWnd, LPCWSTR text, int nchars)
+static void setClipboardText(LPCWSTR text, int nchars)
 {
     int nbytes;
     LPSTR src = getCHARfromWCHAR(text, nchars, &nbytes);
@@ -131,12 +155,8 @@ static void setClipboardText(HWND hWnd, LPCWSTR text, int nchars)
 	    if (dst != NULL) {
 		CopyMemory(dst, src, nbytes+1);
 		GlobalUnlock(data);
-                if (OpenClipboard(hWnd)) {
-                    EmptyClipboard();
-                    SetClipboardData(CF_TEXT, data);
-                    CloseClipboard();
-                    data = NULL;
-                }
+                SetClipboardData(CF_TEXT, data);
+                data = NULL;
 	    }
             if (data != NULL) {
                 GlobalFree(data);
@@ -147,7 +167,7 @@ static void setClipboardText(HWND hWnd, LPCWSTR text, int nchars)
 }
 
 // setClipboardDIB(bmp)
-static void setClipboardDIB(HWND hWnd, BITMAPINFO* src)
+static void setClipboardDIB(BITMAPINFO* src)
 {
     size_t nbytes = getBMPSize(src);
     HANDLE data = GlobalAlloc(GHND, nbytes);
@@ -156,12 +176,8 @@ static void setClipboardDIB(HWND hWnd, BITMAPINFO* src)
         if (dst != NULL) {
             CopyMemory(dst, src, nbytes);
             GlobalUnlock(data);
-            if (OpenClipboard(hWnd)) {
-                EmptyClipboard();
-                SetClipboardData(CF_DIB, data);
-                CloseClipboard();
-                data = NULL;
-            }
+            SetClipboardData(CF_DIB, data);
+            data = NULL;
         }
         if (data != NULL) {
             GlobalFree(data);
@@ -587,6 +603,7 @@ static LRESULT CALLBACK clipWatcherWndProc(
                                     WCHAR path[MAX_PATH];
                                     StringCchPrintf(path, _countof(path), L"%s\\%s.txt", 
                                                     watcher->dstdir, watcher->name);
+                                    setClipboardOrigin(path);
                                     writeTextFile(path, text, nchars);
                                     popupInfo(hWnd, watcher->icon_id,
                                               CLIPBOARD_UPDATED, text);
@@ -606,6 +623,7 @@ static LRESULT CALLBACK clipWatcherWndProc(
                                 WCHAR path[MAX_PATH];
                                 StringCchPrintf(path, _countof(path), L"%s\\%s.bmp", 
                                                 watcher->dstdir, watcher->name);
+                                setClipboardOrigin(path);
                                 writeBMPFile(path, bytes, nbytes);
                                 popupInfo(hWnd, watcher->icon_id,
                                           CLIPBOARD_UPDATED, CLIPBOARD_TYPE_BITMAP);
@@ -643,14 +661,24 @@ static LRESULT CALLBACK clipWatcherWndProc(
                         int nchars;
                         LPWSTR text = readTextFile(path, &nchars);
                         if (text != NULL) {
-                            setClipboardText(hWnd, text, nchars);
+                            if (OpenClipboard(hWnd)) {
+                                EmptyClipboard();
+                                setClipboardOrigin(path);
+                                setClipboardText(text, nchars);
+                                CloseClipboard();
+                            }
                             free(text);
                         }
                     } else if (_wcsicmp(ext, L".bmp") == 0) {
                         // CF_DIB
                         BITMAPINFO* bmp = readBMPFile(path);
                         if (bmp != NULL) {
-                            setClipboardDIB(hWnd, bmp);
+                            if (OpenClipboard(hWnd)) {
+                                EmptyClipboard();
+                                setClipboardOrigin(path);
+                                setClipboardDIB(bmp);
+                                CloseClipboard();
+                            }
                             free(bmp);
                         }
                     }
@@ -815,6 +843,9 @@ int ClipWatcherMain(
 	atom = RegisterClass(&klass);
     }
     
+    // Register the clipboard format.
+    CF_ORIGIN = RegisterClipboardFormat(L"ClipWatcherOrigin");
+
     // Create a ClipWatcher object.
     ClipWatcher* watcher = CreateClipWatcher(hInstance, clipdir, clipdir, name);
     UpdateClipWatcher(watcher);
