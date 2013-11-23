@@ -280,34 +280,61 @@ static BITMAPINFO* readBMPFile(LPCWSTR path)
     return bmp;
 }
 
-// openClipText(name, text, nchars)
-static void openClipText(LPCWSTR name, LPCWSTR text, int nchars)
+// openClipFile()
+static BOOL openClipFile()
 {
     const LPCWSTR OP_OPEN = L"open";
 
-    if (istartswith(text, L"http://") ||
-	istartswith(text, L"https://")) {
-	LPWSTR url = (LPWSTR) malloc(sizeof(WCHAR)*(nchars+1));
-	if (url != NULL) {
-	    WCHAR* p = url;
-	    for (int i = 0; i < nchars; i++) {
-		WCHAR c = text[i];
-		if (L' ' < c) {
-		    *(p++) = c;
-		}
-	    }
-	    *p = L'\0';
-	    ShellExecute(NULL, OP_OPEN, url, NULL, NULL, SW_SHOWDEFAULT);
-	    free(url);
-	}
-    } else {
-	WCHAR temppath[MAX_PATH];
-	GetTempPath(MAX_PATH, temppath);
-	WCHAR path[MAX_PATH];
-	StringCchPrintf(path, _countof(path), L"%s\\%s.txt", temppath, name);
-	writeTextFile(path, text, nchars);
-	ShellExecute(NULL, OP_OPEN, path, NULL, NULL, SW_SHOWDEFAULT);
+    BOOL success = FALSE;
+
+    HANDLE data = GetClipboardData(CF_TEXT);
+    if (data != NULL) {
+        LPSTR bytes = (LPSTR) GlobalLock(data);
+        if (bytes != NULL) {
+            int nchars;
+            LPWSTR text = getWCHARfromCHAR(bytes, GlobalSize(data), &nchars);
+            if (text != NULL) {
+                if (istartswith(text, L"http://") ||
+                    istartswith(text, L"https://")) {
+                    LPWSTR url = (LPWSTR) malloc(sizeof(WCHAR)*(nchars+1));
+                    if (url != NULL) {
+                        WCHAR* p = url;
+                        for (int i = 0; i < nchars; i++) {
+                            WCHAR c = text[i];
+                            if (L' ' < c) {
+                                *(p++) = c;
+                            }
+                        }
+                        *p = L'\0';
+                        ShellExecute(NULL, OP_OPEN, url, NULL, NULL, SW_SHOWDEFAULT);
+                        success = TRUE;
+                        free(url);
+                    }
+                }
+                free(text);
+            }
+            GlobalUnlock(data);
+        }
     }
+    
+    if (success) return success;
+
+    data = GetClipboardData(CF_ORIGIN);
+    if (data != NULL) {
+        LPSTR bytes = (LPSTR) GlobalLock(data);
+        if (bytes != NULL) {
+            int nchars;
+            LPWSTR path = getWCHARfromCHAR(bytes, GlobalSize(data), &nchars);
+            if (path != NULL) {
+                ShellExecute(NULL, OP_OPEN, path, NULL, NULL, SW_SHOWDEFAULT);
+                success = TRUE;
+                free(path);
+            }
+            GlobalUnlock(data);
+        }
+    }
+
+    return success;
 }
 
 // getFileHash(fp)
@@ -426,6 +453,51 @@ static FileEntry* checkFileChanges(ClipWatcher* watcher)
 
 fail:
     return found;
+}
+
+static HICON exportClipFile(ClipWatcher* watcher, LPWSTR dst, int dstlen)
+{
+    HICON icon = NULL;
+
+    // CF_TEXT
+    HANDLE data = GetClipboardData(CF_TEXT);
+    if (data != NULL) {
+        LPSTR bytes = (LPSTR) GlobalLock(data);
+        if (bytes != NULL) {
+            int nchars;
+            LPWSTR text = getWCHARfromCHAR(bytes, GlobalSize(data), &nchars);
+            if (text != NULL) {
+                WCHAR path[MAX_PATH];
+                StringCchPrintf(path, _countof(path), L"%s\\%s.txt", 
+                                watcher->dstdir, watcher->name);
+                setClipboardOrigin(path);
+                writeTextFile(path, text, nchars);
+                icon = watcher->icon_text;
+                StringCchCopy(dst, dstlen, text);
+                free(text);
+            }
+            GlobalUnlock(data);
+        }
+    }
+
+    // CF_DIB
+    data = GetClipboardData(CF_DIB);
+    if (data != NULL) {
+        LPVOID bytes = GlobalLock(data);
+        if (bytes != NULL) {
+            SIZE_T nbytes = GlobalSize(data);
+            WCHAR path[MAX_PATH];
+            StringCchPrintf(path, _countof(path), L"%s\\%s.bmp", 
+                            watcher->dstdir, watcher->name);
+            setClipboardOrigin(path);
+            writeBMPFile(path, bytes, nbytes);
+            icon = watcher->icon_bitmap;
+            StringCchCopy(dst, dstlen, CLIPBOARD_TYPE_BITMAP);
+            GlobalUnlock(bytes);
+        }
+    }
+    
+    return icon;
 }
 
 //  CreateClipWatcher
@@ -592,44 +664,14 @@ static LRESULT CALLBACK clipWatcherWndProc(
                 for (int i = 0; i < CLIPBOARD_RETRY; i++) {
                     Sleep(CLIPBOARD_DELAY);
                     if (OpenClipboard(hWnd)) {
-                        // CF_TEXT
-                        HANDLE data = GetClipboardData(CF_TEXT);
-                        if (data != NULL) {
-                            LPSTR bytes = (LPSTR) GlobalLock(data);
-                            if (bytes != NULL) {
-                                int nchars;
-                                LPWSTR text = getWCHARfromCHAR(bytes, GlobalSize(data), &nchars);
-                                if (text != NULL) {
-                                    WCHAR path[MAX_PATH];
-                                    StringCchPrintf(path, _countof(path), L"%s\\%s.txt", 
-                                                    watcher->dstdir, watcher->name);
-                                    setClipboardOrigin(path);
-                                    writeTextFile(path, text, nchars);
-                                    popupInfo(hWnd, watcher->icon_id,
-                                              CLIPBOARD_UPDATED, text);
-                                    watcher->icon_blinking = watcher->icon_text;
-                                    watcher->icon_blink_count = 10;
-                                    free(text);
-                                }
-                                GlobalUnlock(data);
-                            }
-                        }
-                        // CF_DIB
-                        data = GetClipboardData(CF_DIB);
-                        if (data != NULL) {
-                            LPVOID bytes = GlobalLock(data);
-                            if (bytes != NULL) {
-                                SIZE_T nbytes = GlobalSize(data);
-                                WCHAR path[MAX_PATH];
-                                StringCchPrintf(path, _countof(path), L"%s\\%s.bmp", 
-                                                watcher->dstdir, watcher->name);
-                                setClipboardOrigin(path);
-                                writeBMPFile(path, bytes, nbytes);
+                        if (GetClipboardData(CF_ORIGIN) == NULL) {
+                            WCHAR text[256];
+                            HICON icon = exportClipFile(watcher, text, _countof(text));
+                            if (icon != NULL) {
                                 popupInfo(hWnd, watcher->icon_id,
-                                          CLIPBOARD_UPDATED, CLIPBOARD_TYPE_BITMAP);
-                                watcher->icon_blinking = watcher->icon_bitmap;
+                                          CLIPBOARD_UPDATED, text);
+                                watcher->icon_blinking = icon;
                                 watcher->icon_blink_count = 10;
-                                GlobalUnlock(bytes);
                             }
                         }
                         CloseClipboard();
@@ -697,19 +739,7 @@ static LRESULT CALLBACK clipWatcherWndProc(
 	case IDM_OPEN:
 	    if (watcher != NULL) {
 		if (OpenClipboard(hWnd)) {
-		    HANDLE data = GetClipboardData(CF_TEXT);
-		    if (data != NULL) {
-			LPSTR bytes = (LPSTR) GlobalLock(data);
-			if (bytes != NULL) {
-			    int nchars;
-			    LPWSTR text = getWCHARfromCHAR(bytes, GlobalSize(data), &nchars);
-			    if (text != NULL) {
-				openClipText(watcher->name, text, nchars);
-				free(text);
-			    }
-			    GlobalUnlock(data);
-			}
-		    }
+                    openClipFile();
 		    CloseClipboard();
 		}
 	    }
