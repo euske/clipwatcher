@@ -15,7 +15,6 @@
 const LPCWSTR DEFAULT_CLIPPATH = L"Clipboard";
 const LPCWSTR WATCHING_DIR = L"Watching: %s";
 const LPCWSTR CLIPBOARD_UPDATED = L"Clipboard Updated";
-const LPCWSTR CLIPBOARD_TYPE_BITMAP = L"Bitmap";
 
 const DWORD MAX_FILE_SIZE = 32767;
 const int CLIPBOARD_RETRY = 3;
@@ -25,6 +24,8 @@ const UINT WM_NOTIFY_ICON = WM_USER+1;
 const UINT WM_NOTIFY_FILE = WM_NOTIFY_ICON+1;
 const UINT TIMER_INTERVAL = 400;
 const WORD BMP_SIGNATURE = 0x4d42; // 'BM' in little endian.
+const int FILETYPE_TEXT = 0;
+const int FILETYPE_BITMAP = 1;
 
 static FILE* logfp = stderr;
 
@@ -306,6 +307,7 @@ static BOOL openClipFile()
                             }
                         }
                         *p = L'\0';
+                        fwprintf(logfp, L"open: url=%s\n", url);
                         ShellExecute(NULL, OP_OPEN, url, NULL, NULL, SW_SHOWDEFAULT);
                         success = TRUE;
                         free(url);
@@ -326,6 +328,7 @@ static BOOL openClipFile()
             int nchars;
             LPWSTR path = getWCHARfromCHAR(bytes, GlobalSize(data), &nchars);
             if (path != NULL) {
+                fwprintf(logfp, L"open: path=%s\n", path);
                 ShellExecute(NULL, OP_OPEN, path, NULL, NULL, SW_SHOWDEFAULT);
                 success = TRUE;
                 free(path);
@@ -378,8 +381,7 @@ typedef struct _ClipWatcher {
     UINT_PTR timer_id;
 
     HICON icon_empty;
-    HICON icon_text;
-    HICON icon_bitmap;
+    HICON icon_filetype[2];
     HICON icon_blinking;
     int icon_blink_count;
 } ClipWatcher;
@@ -455,9 +457,9 @@ fail:
     return found;
 }
 
-static HICON exportClipFile(ClipWatcher* watcher, LPWSTR dst, int dstlen)
+static int exportClipFile(LPCWSTR basepath, LPWSTR dst, int dstlen)
 {
-    HICON icon = NULL;
+    int filetype = -1;
 
     // CF_TEXT
     HANDLE data = GetClipboardData(CF_TEXT);
@@ -468,11 +470,10 @@ static HICON exportClipFile(ClipWatcher* watcher, LPWSTR dst, int dstlen)
             LPWSTR text = getWCHARfromCHAR(bytes, GlobalSize(data), &nchars);
             if (text != NULL) {
                 WCHAR path[MAX_PATH];
-                StringCchPrintf(path, _countof(path), L"%s\\%s.txt", 
-                                watcher->dstdir, watcher->name);
+                StringCchPrintf(path, _countof(path), L"%s.txt", basepath);
                 setClipboardOrigin(path);
                 writeTextFile(path, text, nchars);
-                icon = watcher->icon_text;
+                filetype = FILETYPE_TEXT;
                 StringCchCopy(dst, dstlen, text);
                 free(text);
             }
@@ -487,17 +488,16 @@ static HICON exportClipFile(ClipWatcher* watcher, LPWSTR dst, int dstlen)
         if (bytes != NULL) {
             SIZE_T nbytes = GlobalSize(data);
             WCHAR path[MAX_PATH];
-            StringCchPrintf(path, _countof(path), L"%s\\%s.bmp", 
-                            watcher->dstdir, watcher->name);
+            StringCchPrintf(path, _countof(path), L"%s.bmp", basepath);
             setClipboardOrigin(path);
             writeBMPFile(path, bytes, nbytes);
-            icon = watcher->icon_bitmap;
-            StringCchCopy(dst, dstlen, CLIPBOARD_TYPE_BITMAP);
+            filetype = FILETYPE_BITMAP;
+            StringCchCopy(dst, dstlen, path);
             GlobalUnlock(bytes);
         }
     }
     
-    return icon;
+    return filetype;
 }
 
 //  CreateClipWatcher
@@ -519,8 +519,10 @@ ClipWatcher* CreateClipWatcher(
     watcher->icon_id = 1;
     watcher->timer_id = 1;
     watcher->icon_empty = LoadIcon(hInstance, MAKEINTRESOURCE(IDI_CLIPEMPTY));
-    watcher->icon_text = LoadIcon(hInstance, MAKEINTRESOURCE(IDI_CLIPTEXT));
-    watcher->icon_bitmap = LoadIcon(hInstance, MAKEINTRESOURCE(IDI_CLIPBITMAP));
+    watcher->icon_filetype[FILETYPE_TEXT] = \
+        LoadIcon(hInstance, MAKEINTRESOURCE(IDI_CLIPTEXT));
+    watcher->icon_filetype[FILETYPE_BITMAP] = \
+        LoadIcon(hInstance, MAKEINTRESOURCE(IDI_CLIPBITMAP));
     watcher->icon_blinking = NULL;
     watcher->icon_blink_count = 0;
     return watcher;
@@ -665,12 +667,15 @@ static LRESULT CALLBACK clipWatcherWndProc(
                     Sleep(CLIPBOARD_DELAY);
                     if (OpenClipboard(hWnd)) {
                         if (GetClipboardData(CF_ORIGIN) == NULL) {
+                            WCHAR path[MAX_PATH];
+                            StringCchPrintf(path, _countof(path), L"%s\\%s", 
+                                            watcher->dstdir, watcher->name);
                             WCHAR text[256];
-                            HICON icon = exportClipFile(watcher, text, _countof(text));
-                            if (icon != NULL) {
+                            int filetype = exportClipFile(path, text, _countof(text));
+                            if (0 <= filetype) {
                                 popupInfo(hWnd, watcher->icon_id,
                                           CLIPBOARD_UPDATED, text);
-                                watcher->icon_blinking = icon;
+                                watcher->icon_blinking = watcher->icon_filetype[filetype];
                                 watcher->icon_blink_count = 10;
                             }
                         }
