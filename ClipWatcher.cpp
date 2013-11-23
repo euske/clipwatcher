@@ -499,7 +499,7 @@ static FileEntry* checkFileChanges(ClipWatcher* watcher)
     for (;;) {
         LPWSTR name = data.cFileName;
         int index = rindex(name, L'.');
-        if (0 <= index && wcsncmp(name, watcher->name, index) != 0) {
+        if (0 <= index && wcsnicmp(name, watcher->name, index) != 0) {
             WCHAR path[MAX_PATH];
             StringCchPrintf(path, _countof(path), L"%s\\%s", 
                             watcher->srcdir, name);
