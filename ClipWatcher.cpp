@@ -15,16 +15,24 @@
 const LPCWSTR DEFAULT_CLIPPATH = L"Clipboard";
 const LPCWSTR WATCHING_DIR = L"Watching: %s";
 const LPCWSTR CLIPBOARD_UPDATED = L"Clipboard Updated";
+const LPCWSTR BITMAP_UPDATED = L"Bitmap";
 
+const LPCWSTR CLIPWATCHER_NAME = L"ClipWatcher";
+const LPCWSTR CLIPWATCHER_WNDCLASS = L"ClipWatcherClass";
+const LPCWSTR CLIPWATCHER_ORIGIN = L"ClipWatcherOrigin";
+const LPCWSTR FILE_EXT_TEXT = L".txt";
+const LPCWSTR FILE_EXT_BITMAP = L".bmp";
 const int CLIPBOARD_RETRY = 3;
 const UINT CLIPBOARD_DELAY = 100;
-static UINT CF_ORIGIN;
 const UINT ICON_BLINK_INTERVAL = 400;
 const UINT ICON_BLINK_COUNT = 10;
 const WORD BMP_SIGNATURE = 0x4d42; // 'BM' in little endian.
+static HICON HICON_EMPTY;
+static HICON HICON_FILETYPE[2];
+static UINT CF_ORIGIN;
 enum {
     WM_NOTIFY_ICON = WM_USER+1,
-    WM_NOTIFY_FILE = WM_NOTIFY_ICON+1,
+    WM_NOTIFY_FILE,
 };
 enum {
     FILETYPE_TEXT = 0,
@@ -218,7 +226,7 @@ static int getClipboardText(LPWSTR buf, int buflen)
         if (bytes != NULL) {
             SIZE_T nbytes = GlobalSize(data);
             filetype = FILETYPE_BITMAP;
-            StringCchCopy(buf, buflen, L"BITMAP");
+            StringCchCopy(buf, buflen, BITMAP_UPDATED);
             GlobalUnlock(bytes);
         }
     }
@@ -458,8 +466,6 @@ typedef struct _ClipWatcher {
     UINT icon_id;
     UINT_PTR timer_id;
 
-    HICON icon_empty;
-    HICON icon_filetype[2];
     HICON icon_blinking;
     int icon_blink_count;
 } ClipWatcher;
@@ -538,7 +544,6 @@ fail:
 //  CreateClipWatcher
 // 
 ClipWatcher* CreateClipWatcher(
-    HINSTANCE hInstance, 
     LPCWSTR dstdir, LPCWSTR srcdir, LPCWSTR name)
 {
     ClipWatcher* watcher = (ClipWatcher*) malloc(sizeof(ClipWatcher));
@@ -553,11 +558,6 @@ ClipWatcher* CreateClipWatcher(
 
     watcher->icon_id = 1;
     watcher->timer_id = 1;
-    watcher->icon_empty = LoadIcon(hInstance, MAKEINTRESOURCE(IDI_CLIPEMPTY));
-    watcher->icon_filetype[FILETYPE_TEXT] = \
-        LoadIcon(hInstance, MAKEINTRESOURCE(IDI_CLIPTEXT));
-    watcher->icon_filetype[FILETYPE_BITMAP] = \
-        LoadIcon(hInstance, MAKEINTRESOURCE(IDI_CLIPBITMAP));
     watcher->icon_blinking = NULL;
     watcher->icon_blink_count = 0;
     return watcher;
@@ -632,7 +632,7 @@ static LRESULT CALLBACK clipWatcherWndProc(
 	    nidata.uID = watcher->icon_id;
 	    nidata.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
 	    nidata.uCallbackMessage = WM_NOTIFY_ICON;
-	    nidata.hIcon = watcher->icon_empty;
+	    nidata.hIcon = HICON_EMPTY;
 	    StringCchPrintf(nidata.szTip, _countof(nidata.szTip),
 			    WATCHING_DIR, watcher->srcdir);
 	    Shell_NotifyIcon(NIM_ADD, &nidata);
@@ -697,7 +697,7 @@ static LRESULT CALLBACK clipWatcherWndProc(
                                           _countof(nidata.szInfo),
                                           text);
                             Shell_NotifyIcon(NIM_MODIFY, &nidata);
-                            watcher->icon_blinking = watcher->icon_filetype[filetype];
+                            watcher->icon_blinking = HICON_FILETYPE[filetype];
                             watcher->icon_blink_count = ICON_BLINK_COUNT;
                         }
                         CloseClipboard();
@@ -721,7 +721,7 @@ static LRESULT CALLBACK clipWatcherWndProc(
                 int index = rindex(entry->path, L'.');
                 if (0 <= index) {
                     WCHAR* ext = &(entry->path[index]);
-                    if (_wcsicmp(ext, L".txt") == 0) {
+                    if (_wcsicmp(ext, FILE_EXT_TEXT) == 0) {
                         // CF_TEXT
                         int nchars;
                         LPWSTR text = readTextFile(entry->path, &nchars);
@@ -734,7 +734,7 @@ static LRESULT CALLBACK clipWatcherWndProc(
                             }
                             free(text);
                         }
-                    } else if (_wcsicmp(ext, L".bmp") == 0) {
+                    } else if (_wcsicmp(ext, FILE_EXT_BITMAP) == 0) {
                         // CF_DIB
                         BITMAPINFO* bmp = readBMPFile(entry->path);
                         if (bmp != NULL) {
@@ -833,7 +833,7 @@ static LRESULT CALLBACK clipWatcherWndProc(
                 nidata.hWnd = hWnd;
                 nidata.uID = watcher->icon_id;
                 nidata.uFlags = NIF_ICON;
-                nidata.hIcon = (on? watcher->icon_blinking : watcher->icon_empty);
+                nidata.hIcon = (on? watcher->icon_blinking : HICON_EMPTY);
                 Shell_NotifyIcon(NIM_MODIFY, &nidata);
             }
         }
@@ -864,7 +864,7 @@ int ClipWatcherMain(
     }
 
     // Prevent a duplicate process.
-    HANDLE mutex = CreateMutex(NULL, TRUE, L"ClipWatcher");
+    HANDLE mutex = CreateMutex(NULL, TRUE, CLIPWATCHER_NAME);
     if (GetLastError() == ERROR_ALREADY_EXISTS) {
 	CloseHandle(mutex);
 	return 0;
@@ -897,22 +897,30 @@ int ClipWatcherMain(
 	klass.hIcon = LoadIcon(hInstance, MAKEINTRESOURCE(IDI_CLIPWATCHER));
 	klass.hbrBackground = (HBRUSH)(COLOR_WINDOW+1);
         klass.lpszMenuName = MAKEINTRESOURCE(IDM_POPUPMENU);
-	klass.lpszClassName = L"ClipWatcherClass";
+	klass.lpszClassName = CLIPWATCHER_WNDCLASS;
 	atom = RegisterClass(&klass);
     }
     
     // Register the clipboard format.
-    CF_ORIGIN = RegisterClipboardFormat(L"ClipWatcherOrigin");
+    CF_ORIGIN = RegisterClipboardFormat(CLIPWATCHER_ORIGIN);
 
+    // Load the resources.
+    HICON_EMPTY = \
+        LoadIcon(hInstance, MAKEINTRESOURCE(IDI_CLIPEMPTY));
+    HICON_FILETYPE[FILETYPE_TEXT] = \
+        LoadIcon(hInstance, MAKEINTRESOURCE(IDI_CLIPTEXT));
+    HICON_FILETYPE[FILETYPE_BITMAP] = \
+        LoadIcon(hInstance, MAKEINTRESOURCE(IDI_CLIPBITMAP));
+    
     // Create a ClipWatcher object.
-    ClipWatcher* watcher = CreateClipWatcher(hInstance, clipdir, clipdir, name);
+    ClipWatcher* watcher = CreateClipWatcher(clipdir, clipdir, name);
     UpdateClipWatcher(watcher);
     checkFileChanges(watcher);
     
     // Create a SysTray window.
     HWND hWnd = CreateWindow(
 	(LPCWSTR)atom,
-	L"ClipWatcher",
+	CLIPWATCHER_NAME,
 	(WS_OVERLAPPED | WS_SYSMENU),
 	CW_USEDEFAULT, CW_USEDEFAULT,
 	CW_USEDEFAULT, CW_USEDEFAULT,
