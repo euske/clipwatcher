@@ -527,7 +527,8 @@ static FileEntry* checkFileChanges(ClipWatcher* watcher)
                             watcher->srcdir, name);
             HANDLE fp = CreateFile(path, GENERIC_READ, FILE_SHARE_READ,
                                    NULL, OPEN_EXISTING, 
-                                   FILE_ATTRIBUTE_NORMAL | FILE_FLAG_NO_BUFFERING,
+                                   (FILE_ATTRIBUTE_NORMAL | 
+                                    FILE_FLAG_NO_BUFFERING),
                                    NULL);
             if (fp != INVALID_HANDLE_VALUE) {
                 DWORD hash = getFileHash(fp, 256);
