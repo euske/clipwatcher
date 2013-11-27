@@ -12,32 +12,36 @@
 #pragma comment(lib, "user32.lib")
 #pragma comment(lib, "shell32.lib")
 
-const LPCWSTR DEFAULT_CLIPPATH = L"Clipboard";
-const LPCWSTR WATCHING_DIR = L"Watching: %s";
-const LPCWSTR CLIPBOARD_UPDATED = L"Clipboard Updated";
-const LPCWSTR BITMAP_UPDATED = L"Bitmap";
-
+// Constants (you shouldn't change)
 const LPCWSTR CLIPWATCHER_NAME = L"ClipWatcher";
 const LPCWSTR CLIPWATCHER_WNDCLASS = L"ClipWatcherClass";
 const LPCWSTR CLIPWATCHER_ORIGIN = L"ClipWatcherOrigin";
-const LPCWSTR FILE_EXT_TEXT = L".txt";
-const LPCWSTR FILE_EXT_BITMAP = L".bmp";
-const int CLIPBOARD_RETRY = 3;
-const UINT CLIPBOARD_DELAY = 100;
-const UINT ICON_BLINK_INTERVAL = 400;
-const UINT ICON_BLINK_COUNT = 10;
 const WORD BMP_SIGNATURE = 0x4d42; // 'BM' in little endian.
-static HICON HICON_EMPTY;
-static HICON HICON_FILETYPE[2];
 static UINT CF_ORIGIN;
 enum {
     WM_NOTIFY_ICON = WM_USER+1,
     WM_NOTIFY_FILE,
 };
+const LPCWSTR FILE_EXT_TEXT = L".txt";
+const LPCWSTR FILE_EXT_BITMAP = L".bmp";
 enum {
     FILETYPE_TEXT = 0,
     FILETYPE_BITMAP = 1,
 };
+
+// Constants (you may change)
+const int CLIPBOARD_RETRY = 3;
+const UINT CLIPBOARD_DELAY = 100;
+const UINT ICON_BLINK_INTERVAL = 400;
+const UINT ICON_BLINK_COUNT = 10;
+
+// Resources (loaded at runtime)
+static HICON HICON_EMPTY;
+static HICON HICON_FILETYPE[2];
+static WCHAR DEFAULT_CLIPPATH[100] = L"Clipboard";
+static WCHAR MESSAGE_WATCHING[100] = L"Watching: %s";
+static WCHAR MESSAGE_UPDATED[100] = L"Clipboard Updated";
+static WCHAR MESSAGE_BITMAP[100] = L"Bitmap";
 
 static FILE* logfp = stderr;
 
@@ -226,7 +230,7 @@ static int getClipboardText(LPWSTR buf, int buflen)
         if (bytes != NULL) {
             SIZE_T nbytes = GlobalSize(data);
             filetype = FILETYPE_BITMAP;
-            StringCchCopy(buf, buflen, BITMAP_UPDATED);
+            StringCchCopy(buf, buflen, MESSAGE_BITMAP);
             GlobalUnlock(bytes);
         }
     }
@@ -634,7 +638,7 @@ static LRESULT CALLBACK clipWatcherWndProc(
 	    nidata.uCallbackMessage = WM_NOTIFY_ICON;
 	    nidata.hIcon = HICON_EMPTY;
 	    StringCchPrintf(nidata.szTip, _countof(nidata.szTip),
-			    WATCHING_DIR, watcher->srcdir);
+			    MESSAGE_WATCHING, watcher->srcdir);
 	    Shell_NotifyIcon(NIM_ADD, &nidata);
             SetTimer(hWnd, watcher->timer_id, ICON_BLINK_INTERVAL, NULL);
 	}
@@ -692,7 +696,7 @@ static LRESULT CALLBACK clipWatcherWndProc(
                             nidata.uTimeout = 1;
                             StringCchCopy(nidata.szInfoTitle, 
                                           _countof(nidata.szInfoTitle), 
-                                          CLIPBOARD_UPDATED);
+                                          MESSAGE_UPDATED);
                             StringCchCopy(nidata.szInfo, 
                                           _countof(nidata.szInfo),
                                           text);
@@ -911,6 +915,14 @@ int ClipWatcherMain(
         LoadIcon(hInstance, MAKEINTRESOURCE(IDI_CLIPTEXT));
     HICON_FILETYPE[FILETYPE_BITMAP] = \
         LoadIcon(hInstance, MAKEINTRESOURCE(IDI_CLIPBITMAP));
+    LoadString(hInstance, IDS_DEFAULT_CLIPPATH, 
+               DEFAULT_CLIPPATH, _countof(DEFAULT_CLIPPATH));
+    LoadString(hInstance, IDS_MESSAGE_WATCHING, 
+               MESSAGE_WATCHING, _countof(MESSAGE_WATCHING));
+    LoadString(hInstance, IDS_MESSAGE_UPDATED, 
+               MESSAGE_UPDATED, _countof(MESSAGE_UPDATED));
+    LoadString(hInstance, IDS_MESSAGE_BITMAP, 
+               MESSAGE_BITMAP, _countof(MESSAGE_BITMAP));
     
     // Create a ClipWatcher object.
     ClipWatcher* watcher = CreateClipWatcher(clipdir, clipdir, name);
