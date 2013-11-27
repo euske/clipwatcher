@@ -44,7 +44,8 @@ static WCHAR MESSAGE_WATCHING[100] = L"Watching: %s";
 static WCHAR MESSAGE_UPDATED[100] = L"Clipboard Updated";
 static WCHAR MESSAGE_BITMAP[100] = L"Bitmap";
 
-static FILE* logfp = stderr;
+// logging
+static FILE* logfp = NULL;
 
 static int getNumColors(BITMAPINFO* bmp)
 {
@@ -246,7 +247,9 @@ static void writeBytes(LPCWSTR path, LPVOID bytes, int nbytes)
 			   NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, 
 			   NULL);
     if (fp != INVALID_HANDLE_VALUE) {
-	fwprintf(logfp, L"write: path=%s, nbytes=%u\n", path, nbytes);
+        if (logfp != NULL) {
+            fwprintf(logfp, L"write: path=%s, nbytes=%u\n", path, nbytes);
+        }
         DWORD writtenbytes;
         WriteFile(fp, bytes, nbytes, &writtenbytes, NULL);
 	CloseHandle(fp);
@@ -279,7 +282,9 @@ static LPWSTR readTextFile(LPCWSTR path, int* nchars)
 	if (MAX_FILE_SIZE < nbytes) {
 	    nbytes = MAX_FILE_SIZE;
 	}
-	fwprintf(logfp, L"read: path=%s, nbytes=%u\n", path, nbytes);
+        if (logfp != NULL) {
+            fwprintf(logfp, L"read: path=%s, nbytes=%u\n", path, nbytes);
+        }
 	LPSTR bytes = (LPSTR) malloc(nbytes);
 	if (bytes != NULL) {
 	    DWORD readbytes;
@@ -304,7 +309,9 @@ static void writeBMPFile(LPCWSTR path, LPVOID bytes, SIZE_T nbytes)
 			   NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, 
 			   NULL);
     if (fp != INVALID_HANDLE_VALUE) {
-	fwprintf(logfp, L"write: path=%s, nbytes=%u\n", path, filehdr.bfSize);
+        if (logfp != NULL) {
+            fwprintf(logfp, L"write: path=%s, nbytes=%u\n", path, filehdr.bfSize);
+        }
         DWORD writtenbytes;
         WriteFile(fp, &filehdr, sizeof(filehdr), &writtenbytes, NULL);
         WriteFile(fp, bytes, nbytes, &writtenbytes, NULL);
@@ -362,7 +369,9 @@ static BOOL openClipFile()
                             }
                         }
                         *p = L'\0';
-                        fwprintf(logfp, L"open: url=%s\n", url);
+                        if (logfp != NULL) {
+                            fwprintf(logfp, L"open: url=%s\n", url);
+                        }
                         ShellExecute(NULL, OP_OPEN, url, NULL, NULL, SW_SHOWDEFAULT);
                         success = TRUE;
                         free(url);
@@ -383,7 +392,9 @@ static BOOL openClipFile()
             int nchars;
             LPWSTR path = getWCHARfromCHAR(bytes, GlobalSize(data), &nchars);
             if (path != NULL) {
-                fwprintf(logfp, L"open: path=%s\n", path);
+                if (logfp != NULL) {
+                    fwprintf(logfp, L"open: path=%s\n", path);
+                }
                 ShellExecute(NULL, OP_OPEN, path, NULL, NULL, SW_SHOWDEFAULT);
                 success = TRUE;
                 free(path);
@@ -520,10 +531,14 @@ static FileEntry* checkFileChanges(ClipWatcher* watcher)
                                    NULL);
             if (fp != INVALID_HANDLE_VALUE) {
                 DWORD hash = getFileHash(fp, 256);
-                fwprintf(logfp, L"check: name=%s (%08x)\n", name, hash);
+                if (logfp != NULL) {
+                    fwprintf(logfp, L"check: name=%s (%08x)\n", name, hash);
+                }
                 FileEntry* entry = findFileEntry(watcher->files, path);
                 if (entry == NULL) {
-                    fwprintf(logfp, L"added: name=%s\n", name);
+                    if (logfp != NULL) {
+                        fwprintf(logfp, L"added: name=%s\n", name);
+                    }
                     entry = (FileEntry*) malloc(sizeof(FileEntry));
                     StringCchCopy(entry->path, _countof(entry->path), path);
                     entry->hash = hash;
@@ -531,7 +546,9 @@ static FileEntry* checkFileChanges(ClipWatcher* watcher)
                     watcher->files = entry;
                     found = entry;
                 } else if (hash != entry->hash) {
-                    fwprintf(logfp, L"updated: name=%s\n", name);
+                    if (logfp != NULL) {
+                        fwprintf(logfp, L"updated: name=%s\n", name);
+                    }
                     entry->hash = hash;
                     found = entry;
                 }
@@ -580,8 +597,10 @@ void StartClipWatcher(ClipWatcher* watcher)
              FILE_NOTIFY_CHANGE_SIZE |
              FILE_NOTIFY_CHANGE_ATTRIBUTES |
              FILE_NOTIFY_CHANGE_LAST_WRITE));
-        fwprintf(logfp, L"register: srcdir=%s, notifier=%p\n", 
-                 watcher->srcdir, watcher->notifier);
+        if (logfp != NULL) {
+            fwprintf(logfp, L"register: srcdir=%s, notifier=%p\n", 
+                     watcher->srcdir, watcher->notifier);
+        }
     }
 }
 
@@ -633,7 +652,9 @@ static LRESULT CALLBACK clipWatcherWndProc(
 	ClipWatcher* watcher = (ClipWatcher*)(cs->lpCreateParams);
 	if (watcher != NULL) {
 	    SetWindowLongPtr(hWnd, GWLP_USERDATA, (LONG_PTR)watcher);
-	    fwprintf(logfp, L"watcher: %s\n", watcher->name);
+            if (logfp != NULL) {
+                fwprintf(logfp, L"watcher: %s\n", watcher->name);
+            }
 	    // Start watching the clipboard content.
             AddClipboardFormatListener(hWnd);
 	    // Register the icon.
@@ -683,7 +704,9 @@ static LRESULT CALLBACK clipWatcherWndProc(
             DWORD seqno = GetClipboardSequenceNumber();
 	    if (watcher->seqno < seqno) {
                 watcher->seqno = seqno;
-                fwprintf(logfp, L"updated clipboard: seqno=%d\n", seqno);
+                if (logfp != NULL) {
+                    fwprintf(logfp, L"updated clipboard: seqno=%d\n", seqno);
+                }
                 for (int i = 0; i < CLIPBOARD_RETRY; i++) {
                     Sleep(CLIPBOARD_DELAY);
                     if (OpenClipboard(hWnd)) {
@@ -730,7 +753,9 @@ static LRESULT CALLBACK clipWatcherWndProc(
 	if (watcher != NULL) {
 	    FileEntry* entry = checkFileChanges(watcher);
 	    if (entry != NULL) {
-		fwprintf(logfp, L"updated file: path=%s\n", entry->path);
+                if (logfp != NULL) {
+                    fwprintf(logfp, L"updated file: path=%s\n", entry->path);
+                }
                 int index = rindex(entry->path, L'.');
                 if (0 <= index) {
                     WCHAR* ext = &(entry->path[index]);
@@ -1016,6 +1041,7 @@ int WinMain(HINSTANCE hInstance,
 #else
 int wmain(int argc, wchar_t* argv[])
 {
+    logfp = stderr;
     return ClipWatcherMain(GetModuleHandle(NULL), NULL, 0, argc, argv);
 }
 #endif
