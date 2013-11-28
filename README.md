@@ -8,8 +8,8 @@ content among multiple machines.
 The exchange is bidirectional. When you copy a text, the content is saved
 as %ComputerName%.txt (e.g. `C:\Users\euske\Clipboard\EUSKE-HP.txt`).
 When a file is created or modified within the directory, the content is
-automatically copied to the clipboard. 
-The default directory is `%UserProfile%/Clipboard`. 
+automatically copied to the clipboard. The default directory is 
+`%UserProfile%\Clipboard`. 
 
 Currently, only text (.txt) and bitmap (.bmp) formats are supported.
 
