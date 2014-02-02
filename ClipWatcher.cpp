@@ -470,6 +470,7 @@ static DWORD getFileHash(HANDLE fp, DWORD n)
 typedef struct _FileEntry {
     WCHAR path[MAX_PATH];
     DWORD hash;
+    FILETIME mtime;
     struct _FileEntry* next;
 } FileEntry;
 
@@ -536,8 +537,11 @@ static FileEntry* checkFileChanges(ClipWatcher* watcher)
                                    NULL);
             if (fp != INVALID_HANDLE_VALUE) {
                 DWORD hash = getFileHash(fp, 256);
+                FILETIME mtime;
+                GetFileTime(fp, NULL, NULL, &mtime);
                 if (logfp != NULL) {
-                    fwprintf(logfp, L"check: name=%s (%08x)\n", name, hash);
+                    fwprintf(logfp, L"check: name=%s (%08x, %08x)\n", 
+                             name, hash, mtime.dwLowDateTime);
                 }
                 FileEntry* entry = findFileEntry(watcher->files, path);
                 if (entry == NULL) {
@@ -547,14 +551,17 @@ static FileEntry* checkFileChanges(ClipWatcher* watcher)
                     entry = (FileEntry*) malloc(sizeof(FileEntry));
                     StringCchCopy(entry->path, _countof(entry->path), path);
                     entry->hash = hash;
+                    entry->mtime = mtime;
                     entry->next = watcher->files;
                     watcher->files = entry;
                     found = entry;
-                } else if (hash != entry->hash) {
+                } else if (hash != entry->hash ||
+                           CompareFileTime(&mtime, &(entry->mtime)) != 0) {
                     if (logfp != NULL) {
                         fwprintf(logfp, L"updated: name=%s\n", name);
                     }
                     entry->hash = hash;
+                    entry->mtime = mtime;
                     found = entry;
                 }
                 CloseHandle(fp);
