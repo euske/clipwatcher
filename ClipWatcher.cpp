@@ -101,7 +101,7 @@ static LPSTR getCHARfromWCHAR(LPCWSTR chars, int nchars, int* pnbytes)
     return bytes;
 }
 
-// ristrip(text1, text2)
+// stripspace(text1, text2)
 static LPWSTR ristrip(LPCWSTR text1, LPCWSTR text2)
 {
     int len1 = wcslen(text1);
@@ -116,6 +116,19 @@ static LPWSTR ristrip(LPCWSTR text1, LPCWSTR text2)
 	StringCchCopy(dst, dstlen+1, text1);
     }
     return dst;
+}
+
+// rmspace(text)
+static void rmspace(LPWSTR src)
+{
+    WCHAR* dst = src;
+    WCHAR c;
+    while ((c = *(src++)) != 0) {
+        if (L' ' < c) {
+            *(dst++) = c;
+        }
+    }
+    *dst = L'\0';
 }
 
 // rindex(filename)
@@ -350,6 +363,7 @@ static BOOL openClipFile()
 
     BOOL success = FALSE;
 
+    // Try opening CF_TEXT.
     HANDLE data = GetClipboardData(CF_TEXT);
     if (data != NULL) {
         LPSTR bytes = (LPSTR) GlobalLock(data);
@@ -357,34 +371,23 @@ static BOOL openClipFile()
             int nchars;
             LPWSTR text = getWCHARfromCHAR(bytes, GlobalSize(data), &nchars);
             if (text != NULL) {
+                rmspace(text);
                 if (istartswith(text, L"http://") ||
                     istartswith(text, L"https://")) {
-                    LPWSTR url = (LPWSTR) malloc(sizeof(WCHAR)*(nchars+1));
-                    if (url != NULL) {
-                        WCHAR* p = url;
-                        for (int i = 0; i < nchars; i++) {
-                            WCHAR c = text[i];
-                            if (L' ' < c) {
-                                *(p++) = c;
-                            }
-                        }
-                        *p = L'\0';
-                        if (logfp != NULL) {
-                            fwprintf(logfp, L"open: url=%s\n", url);
-                        }
-                        ShellExecute(NULL, OP_OPEN, url, NULL, NULL, SW_SHOWDEFAULT);
-                        success = TRUE;
-                        free(url);
+                    if (logfp != NULL) {
+                        fwprintf(logfp, L"open: url=%s\n", text);
                     }
+                    ShellExecute(NULL, OP_OPEN, text, NULL, NULL, SW_SHOWDEFAULT);
+                    success = TRUE;
                 }
                 free(text);
             }
             GlobalUnlock(data);
         }
     }
-    
     if (success) return success;
 
+    // Try opening CF_ORIGIN.
     data = GetClipboardData(CF_ORIGIN);
     if (data != NULL) {
         LPSTR bytes = (LPSTR) GlobalLock(data);
@@ -402,8 +405,9 @@ static BOOL openClipFile()
             GlobalUnlock(data);
         }
     }
+    if (success) return success;
 
-    return success;
+    return FALSE;
 }
 
 // exportClipFile(basepath)
