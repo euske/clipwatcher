@@ -16,8 +16,10 @@
 const LPCWSTR CLIPWATCHER_NAME = L"ClipWatcher";
 const LPCWSTR CLIPWATCHER_WNDCLASS = L"ClipWatcherClass";
 const LPCWSTR CLIPWATCHER_ORIGIN = L"ClipWatcherOrigin";
+const LPCWSTR TASKBAR_CREATED = L"TaskbarCreated";
 const WORD BMP_SIGNATURE = 0x4d42; // 'BM' in little endian.
 static UINT CF_ORIGIN;
+static UINT WM_TASKBAR_CREATED;
 enum {
     WM_NOTIFY_ICON = WM_USER+1,
     WM_NOTIFY_FILE,
@@ -669,19 +671,9 @@ static LRESULT CALLBACK clipWatcherWndProc(
             }
 	    // Start watching the clipboard content.
             AddClipboardFormatListener(hWnd);
-	    // Register the icon.
-	    NOTIFYICONDATA nidata = {0};
-	    nidata.cbSize = sizeof(nidata);
-	    nidata.hWnd = hWnd;
-	    nidata.uID = watcher->icon_id;
-	    nidata.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
-	    nidata.uCallbackMessage = WM_NOTIFY_ICON;
-	    nidata.hIcon = HICON_EMPTY;
-	    StringCchPrintf(nidata.szTip, _countof(nidata.szTip),
-			    MESSAGE_WATCHING, watcher->srcdir);
-	    Shell_NotifyIcon(NIM_ADD, &nidata);
             SetTimer(hWnd, watcher->blink_timer_id, ICON_BLINK_INTERVAL, NULL);
             SetTimer(hWnd, watcher->check_timer_id, FILESYSTEM_INTERVAL, NULL);
+	    SendMessage(hWnd, WM_TASKBAR_CREATED, 0, 0);
 	}
 	return FALSE;
     }
@@ -901,6 +893,23 @@ static LRESULT CALLBACK clipWatcherWndProc(
 	return FALSE;
 
     default:
+        if (uMsg == WM_TASKBAR_CREATED) {
+            LONG_PTR lp = GetWindowLongPtr(hWnd, GWLP_USERDATA);
+            ClipWatcher* watcher = (ClipWatcher*)lp;
+            if (watcher != NULL) {
+                // Register the icon.
+                NOTIFYICONDATA nidata = {0};
+                nidata.cbSize = sizeof(nidata);
+                nidata.hWnd = hWnd;
+                nidata.uID = watcher->icon_id;
+                nidata.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
+                nidata.uCallbackMessage = WM_NOTIFY_ICON;
+                nidata.hIcon = HICON_EMPTY;
+                StringCchPrintf(nidata.szTip, _countof(nidata.szTip),
+                                MESSAGE_WATCHING, watcher->srcdir);
+                Shell_NotifyIcon(NIM_ADD, &nidata);
+            }
+        }
 	return DefWindowProc(hWnd, uMsg, wParam, lParam);
     }
 }
@@ -959,6 +968,8 @@ int ClipWatcherMain(
     
     // Register the clipboard format.
     CF_ORIGIN = RegisterClipboardFormat(CLIPWATCHER_ORIGIN);
+    // Register the window message.
+    WM_TASKBAR_CREATED = RegisterWindowMessage(TASKBAR_CREATED);
 
     // Load the resources.
     HICON_EMPTY = \
