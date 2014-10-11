@@ -75,10 +75,10 @@ static size_t getBMPSize(BITMAPINFO* bmp)
 
 static LPWSTR getWCHARfromCHAR(LPCSTR bytes, int nbytes, int* pnchars)
 {
-    int nchars = MultiByteToWideChar(CP_ACP, 0, bytes, nbytes, NULL, 0);
+    int nchars = MultiByteToWideChar(CP_UTF8, 0, bytes, nbytes, NULL, 0);
     LPWSTR chars = (LPWSTR) malloc(sizeof(WCHAR)*(nchars+1));
     if (chars != NULL) {
-	MultiByteToWideChar(CP_ACP, 0, bytes, nbytes, chars, nchars);
+	MultiByteToWideChar(CP_UTF8, 0, bytes, nbytes, chars, nchars);
 	chars[nchars] = L'\0';
 	if (pnchars != NULL) {
 	    *pnchars = nchars;
@@ -89,13 +89,13 @@ static LPWSTR getWCHARfromCHAR(LPCSTR bytes, int nbytes, int* pnchars)
 
 static LPSTR getCHARfromWCHAR(LPCWSTR chars, int nchars, int* pnbytes)
 {
-    int nbytes = WideCharToMultiByte(CP_ACP, 0, chars, nchars, 
+    int nbytes = WideCharToMultiByte(CP_UTF8, 0, chars, nchars, 
 				     NULL, 0, NULL, NULL);
     LPSTR bytes = (LPSTR) malloc(sizeof(CHAR)*(nbytes+1));
     if (bytes != NULL) {
-	WideCharToMultiByte(CP_ACP, 0, chars, nchars, 
+	WideCharToMultiByte(CP_UTF8, 0, chars, nchars, 
 			    (LPSTR)bytes, nbytes, NULL, NULL);
-	bytes[nbytes] = 0;
+	bytes[nbytes] = '\0';
 	if (pnbytes != NULL) {
 	    *pnbytes = nbytes;
 	}
@@ -263,7 +263,6 @@ static void writeTextFile(LPCWSTR path, LPCWSTR text, int nchars)
 {
     int nbytes;
     LPSTR bytes = getCHARfromWCHAR(text, nchars, &nbytes);
-    nbytes--;
     if (bytes != NULL) {
         writeBytes(path, bytes, nbytes);
         free(bytes);
