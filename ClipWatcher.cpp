@@ -180,23 +180,19 @@ static void setClipboardOrigin(LPCWSTR path)
 // setClipboardText(text, nchars)
 static void setClipboardText(LPCWSTR text, int nchars)
 {
-    int nbytes;
-    LPSTR src = getCHARfromWCHAR(text, nchars, &nbytes);
-    if (src != NULL) {
-	HANDLE data = GlobalAlloc(GHND, nbytes+1);
-	if (data != NULL) {
-	    LPSTR dst = (LPSTR) GlobalLock(data);
-	    if (dst != NULL) {
-		CopyMemory(dst, src, nbytes+1);
-		GlobalUnlock(data);
-                SetClipboardData(CF_TEXT, data);
-                data = NULL;
-	    }
-            if (data != NULL) {
-                GlobalFree(data);
-            }
-	}
-	free(src);
+    int nbytes = sizeof(WCHAR)*(nchars+1);
+    HANDLE data = GlobalAlloc(GHND, nbytes);
+    if (data != NULL) {
+        BYTE* dst = (BYTE*) GlobalLock(data);
+        if (dst != NULL) {
+            CopyMemory(dst, text, nbytes);
+            GlobalUnlock(data);
+            SetClipboardData(CF_UNICODETEXT, data);
+            data = NULL;
+        }
+        if (data != NULL) {
+            GlobalFree(data);
+        }
     }
 }
 
@@ -224,18 +220,13 @@ static int getClipboardText(LPWSTR buf, int buflen)
 {
     int filetype = -1;
 
-    // CF_TEXT
-    HANDLE data = GetClipboardData(CF_TEXT);
+    // CF_UNICODETEXT
+    HANDLE data = GetClipboardData(CF_UNICODETEXT);
     if (data != NULL) {
-        LPSTR bytes = (LPSTR) GlobalLock(data);
-        if (bytes != NULL) {
-            int nchars;
-            LPWSTR text = getWCHARfromCHAR(bytes, GlobalSize(data), &nchars);
-            if (text != NULL) {
-                filetype = FILETYPE_TEXT;
-                StringCchCopy(buf, buflen, text);
-                free(text);
-            }
+        LPWSTR text = (LPWSTR) GlobalLock(data);
+        if (text != NULL) {
+            filetype = FILETYPE_TEXT;
+            StringCchCopy(buf, buflen, text);
             GlobalUnlock(data);
         }
     }
@@ -365,13 +356,12 @@ static BOOL openClipFile()
 
     BOOL success = FALSE;
 
-    // Try opening CF_TEXT.
-    HANDLE data = GetClipboardData(CF_TEXT);
+    // Try opening CF_UNICODETEXT.
+    HANDLE data = GetClipboardData(CF_UNICODETEXT);
     if (data != NULL) {
-        LPSTR bytes = (LPSTR) GlobalLock(data);
-        if (bytes != NULL) {
-            int nchars;
-            LPWSTR text = getWCHARfromCHAR(bytes, GlobalSize(data), &nchars);
+        LPWSTR text = (LPWSTR) GlobalLock(data);
+        if (text != NULL) {
+            text = _wcsdup(text);
             if (text != NULL) {
                 rmspace(text);
                 if (istartswith(text, L"http://") ||
@@ -415,20 +405,15 @@ static BOOL openClipFile()
 // exportClipFile(basepath)
 static void exportClipFile(LPCWSTR basepath)
 {
-    // CF_TEXT
-    HANDLE data = GetClipboardData(CF_TEXT);
+    // CF_UNICODETEXT
+    HANDLE data = GetClipboardData(CF_UNICODETEXT);
     if (data != NULL) {
-        LPSTR bytes = (LPSTR) GlobalLock(data);
-        if (bytes != NULL) {
-            int nchars;
-            LPWSTR text = getWCHARfromCHAR(bytes, GlobalSize(data), &nchars);
-            if (text != NULL) {
-                WCHAR path[MAX_PATH];
-                StringCchPrintf(path, _countof(path), L"%s.txt", basepath);
-                setClipboardOrigin(path);
-                writeTextFile(path, text, nchars);
-                free(text);
-            }
+        LPWSTR text = (LPWSTR) GlobalLock(data);
+        if (text != NULL) {
+            WCHAR path[MAX_PATH];
+            StringCchPrintf(path, _countof(path), L"%s.txt", basepath);
+            setClipboardOrigin(path);
+            writeTextFile(path, text, wcslen(text));
             GlobalUnlock(data);
         }
     }
@@ -764,7 +749,7 @@ static LRESULT CALLBACK clipWatcherWndProc(
                 if (0 <= index) {
                     WCHAR* ext = &(entry->path[index]);
                     if (_wcsicmp(ext, FILE_EXT_TEXT) == 0) {
-                        // CF_TEXT
+                        // CF_UNICODETEXT
                         int nchars;
                         LPWSTR text = readTextFile(entry->path, &nchars);
                         if (text != NULL) {
