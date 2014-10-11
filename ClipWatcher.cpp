@@ -157,23 +157,19 @@ static int istartswith(LPCWSTR text1, LPCWSTR text2)
 // setClipboardOrigin(path)
 static void setClipboardOrigin(LPCWSTR path)
 {
-    int nbytes;
-    LPSTR src = getCHARfromWCHAR(path, wcslen(path), &nbytes);
-    if (src != NULL) {
-	HANDLE data = GlobalAlloc(GHND, nbytes+1);
-	if (data != NULL) {
-	    LPSTR dst = (LPSTR) GlobalLock(data);
-	    if (dst != NULL) {
-		CopyMemory(dst, src, nbytes+1);
-		GlobalUnlock(data);
-                SetClipboardData(CF_ORIGIN, data);
-                data = NULL;
-	    }
-            if (data != NULL) {
-                GlobalFree(data);
-            }
+    int nbytes = sizeof(WCHAR)*(wcslen(path)+1);
+    HANDLE data = GlobalAlloc(GHND, nbytes);
+    if (data != NULL) {
+        BYTE* dst = (BYTE*) GlobalLock(data);
+        if (dst != NULL) {
+            CopyMemory(dst, path, nbytes);
+            GlobalUnlock(data);
+            SetClipboardData(CF_ORIGIN, data);
+            data = NULL;
+        }
+        if (data != NULL) {
+            GlobalFree(data);
 	}
-	free(src);
     }
 }
 
@@ -382,18 +378,13 @@ static BOOL openClipFile()
     // Try opening CF_ORIGIN.
     data = GetClipboardData(CF_ORIGIN);
     if (data != NULL) {
-        LPSTR bytes = (LPSTR) GlobalLock(data);
-        if (bytes != NULL) {
-            int nchars;
-            LPWSTR path = getWCHARfromCHAR(bytes, GlobalSize(data), &nchars);
-            if (path != NULL) {
-                if (logfp != NULL) {
-                    fwprintf(logfp, L"open: path=%s\n", path);
-                }
-                ShellExecute(NULL, OP_OPEN, path, NULL, NULL, SW_SHOWDEFAULT);
-                success = TRUE;
-                free(path);
+        LPWSTR path = (LPWSTR) GlobalLock(data);
+        if (path != NULL) {
+            if (logfp != NULL) {
+                fwprintf(logfp, L"open: path=%s\n", path);
             }
+            ShellExecute(NULL, OP_OPEN, path, NULL, NULL, SW_SHOWDEFAULT);
+            success = TRUE;
             GlobalUnlock(data);
         }
     }
