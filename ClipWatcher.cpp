@@ -3,9 +3,9 @@
 
 #include <stdio.h>
 #include <stdlib.h>
-#include <Windows.h>
-#include <StrSafe.h>
-#include <Shlobj.h>
+#include <windows.h>
+#include <strsafe.h>
+#include <shlobj.h>
 #include <dbt.h>
 #include "Resource.h"
 
@@ -37,6 +37,8 @@ const UINT CLIPBOARD_DELAY = 100;
 const UINT ICON_BLINK_INTERVAL = 400;
 const UINT ICON_BLINK_COUNT = 10;
 const UINT FILESYSTEM_INTERVAL = 1000;
+const LPCWSTR ERROR_TITLE = L"ClipWatcher Error";
+const LPCWSTR ERROR_NOTFOUND = L"Directory does not exist";
 
 // Resources (loaded at runtime)
 static HICON HICON_EMPTY;
@@ -918,6 +920,13 @@ int ClipWatcherMain(
 	SHGetFolderPath(NULL, CSIDL_PROFILE, NULL, SHGFP_TYPE_CURRENT, home);
 	StringCchPrintf(clipdir, _countof(clipdir), L"%s\\%s", 
 			home, clippath);
+        if (GetFileAttributes(clipdir) == INVALID_FILE_ATTRIBUTES) {
+            WCHAR msg[MAX_PATH];
+            StringCchPrintf(msg, _countof(msg), L"%s (%s)", 
+                            ERROR_NOTFOUND, clipdir);
+            MessageBox(NULL, msg, ERROR_TITLE, MB_OK | MB_ICONERROR);
+            return 1;
+        }
     } else {
 	StringCchCopy(clipdir, _countof(clipdir), clippath);
     }
