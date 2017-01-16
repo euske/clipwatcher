@@ -468,6 +468,7 @@ typedef struct _ClipWatcher {
     UINT_PTR check_timer_id;
     HICON icon_blinking;
     int icon_blink_count;
+    int show_balloon;
 } ClipWatcher;
 
 // findFileEntry(files, path)
@@ -574,6 +575,7 @@ ClipWatcher* CreateClipWatcher(
     watcher->check_timer_id = 2;
     watcher->icon_blinking = NULL;
     watcher->icon_blink_count = 0;
+    watcher->show_balloon = 0;
     return watcher;
 }
 
@@ -700,20 +702,22 @@ static LRESULT CALLBACK clipWatcherWndProc(
                         WCHAR text[256];
                         int filetype = getClipboardText(text, _countof(text));
                         if (0 <= filetype) {
-                            NOTIFYICONDATA nidata = {0};
-                            nidata.cbSize = sizeof(nidata);
-                            nidata.hWnd = hWnd;
-                            nidata.uID = watcher->icon_id;
-                            nidata.uFlags = NIF_INFO;
-                            nidata.dwInfoFlags = NIIF_INFO;
-                            nidata.uTimeout = 1;
-                            StringCchCopy(nidata.szInfoTitle, 
-                                          _countof(nidata.szInfoTitle), 
-                                          MESSAGE_UPDATED);
-                            StringCchCopy(nidata.szInfo, 
-                                          _countof(nidata.szInfo),
-                                          text);
-                            Shell_NotifyIcon(NIM_MODIFY, &nidata);
+                            if (watcher->show_balloon) {
+                                NOTIFYICONDATA nidata = {0};
+                                nidata.cbSize = sizeof(nidata);
+                                nidata.hWnd = hWnd;
+                                nidata.uID = watcher->icon_id;
+                                nidata.uFlags = NIF_INFO;
+                                nidata.dwInfoFlags = NIIF_INFO;
+                                nidata.uTimeout = 1000;
+                                StringCchCopy(nidata.szInfoTitle, 
+                                              _countof(nidata.szInfoTitle), 
+                                              MESSAGE_UPDATED);
+                                StringCchCopy(nidata.szInfo, 
+                                              _countof(nidata.szInfo),
+                                              text);
+                                Shell_NotifyIcon(NIM_MODIFY, &nidata);
+                            }
                             watcher->icon_blinking = HICON_FILETYPE[filetype];
                             watcher->icon_blink_count = ICON_BLINK_COUNT;
                         }
